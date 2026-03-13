@@ -219,6 +219,7 @@ import {
   getSongDuration,
   invalidateSongSourceCache,
   pingMusicApi,
+  probeApiPlayable,
   reportPlaybackResult,
   resolvePlayableUrls,
   searchMusic,
@@ -443,8 +444,17 @@ const chooseSearchSong = async (song: SongResult) => {
 const loadAvailableApiBases = async () => {
   const current = getApiBase()
   const seed = Array.from(new Set([current, ...API_PRESET_BASES].map((item) => item.trim()).filter(Boolean)))
+  const playableList: string[] = []
   const okList: string[] = []
   for (const base of seed) {
+    try {
+      const playable = await probeApiPlayable(base)
+      if (playable) {
+        playableList.push(base)
+        okList.push(base)
+        continue
+      }
+    } catch {}
     try {
       const ok = await pingMusicApi(base)
       if (ok) {
@@ -452,7 +462,7 @@ const loadAvailableApiBases = async () => {
       }
     } catch {}
   }
-  availableApiBases.value = okList.length > 0 ? okList : seed
+  availableApiBases.value = playableList.length > 0 ? playableList : okList.length > 0 ? okList : seed
   selectedApiBase.value = availableApiBases.value.includes(current) ? current : availableApiBases.value[0] || current
   if (selectedApiBase.value) {
     setApiBase(selectedApiBase.value)
