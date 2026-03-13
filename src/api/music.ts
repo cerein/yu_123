@@ -64,7 +64,11 @@ const lyricMap: Record<string, ILyric> = {
 
 const API_BASE_KEY = 'music_api_base'
 const METING_BASE = 'https://api.injahow.cn/meting/'
-const PUBLIC_API_BASES: string[] = []
+const PUBLIC_API_BASES: string[] = [
+  // 这是一个公开的网易云音乐 API 实例，仅供测试使用。
+  // 建议自行部署：https://github.com/Binaryify/NeteaseCloudMusicApi
+  'https://netease-cloud-music-api-beta-lyart.vercel.app'
+]
 const PARSER_APIS = [
   (id: string) => `${METING_BASE}?server=netease&type=url&id=${id}&br=999`,
   (id: string) => `${METING_BASE}?server=netease&type=url&id=${id}&br=320`,
