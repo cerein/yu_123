@@ -67,13 +67,17 @@ const lyricMap: Record<string, ILyric> = {
 
 const API_BASE_KEY = 'music_api_base'
 const METING_BASE = 'https://api.injahow.cn/meting/'
+const REMOTE_UNM_BASE = ((import.meta as { env?: { VITE_REMOTE_UNM_BASE?: string } }).env?.VITE_REMOTE_UNM_BASE || '').trim()
+const STREAM_PROXY_BASE = ((import.meta as { env?: { VITE_STREAM_PROXY_BASE?: string } }).env?.VITE_STREAM_PROXY_BASE || '').trim()
 const PUBLIC_API_BASES: string[] = [
   'https://ncm.zhenxin.me',
   'https://zm.wwoyun.cn',
   'https://zm.i9mr.com',
   'https://netease-cloud-music-api-beta-lyart.vercel.app'
 ]
-export const API_PRESET_BASES: string[] = ['/unm-api', ...PUBLIC_API_BASES]
+export const API_PRESET_BASES: string[] = Array.from(
+  new Set(['/unm-api', REMOTE_UNM_BASE, ...PUBLIC_API_BASES].map((item) => item.trim()).filter(Boolean))
+)
 const canUseLocalUnm = () => {
   if (typeof window === 'undefined') return false
   return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -239,7 +243,17 @@ const getPreferredUnmBase = () => {
 const canUseInCurrentPage = (url: string) => {
   if (typeof window === 'undefined') return true
   if (window.location.protocol !== 'https:') return true
-  return !url.startsWith('http://')
+  if (!url.startsWith('http://')) return true
+  return Boolean(STREAM_PROXY_BASE)
+}
+
+const applyStreamProxyIfNeeded = (url: string) => {
+  if (!url.startsWith('http://')) return url
+  if (typeof window === 'undefined') return url
+  if (window.location.protocol !== 'https:') return url
+  if (!STREAM_PROXY_BASE) return ''
+  const base = STREAM_PROXY_BASE.replace(/\/+$/, '')
+  return `${base}/stream?url=${encodeURIComponent(url)}`
 }
 
 type RawSong = {
@@ -1026,8 +1040,10 @@ export const resolvePlayableUrls = async (song: SongResult, forceRefresh = false
     const normalized = normalizeMediaUrl(url)
     if (!normalized) return
     if (!canUseInCurrentPage(normalized)) return
-    if (!candidates.includes(normalized)) {
-      candidates.push(normalized)
+    const candidate = applyStreamProxyIfNeeded(normalized)
+    if (!candidate) return
+    if (!candidates.includes(candidate)) {
+      candidates.push(candidate)
     }
   }
 

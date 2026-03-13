@@ -50,3 +50,19 @@
 - 使用策略化降级而不是单接口直连
 - 通过缓存 + 失败冷却降低无效重试
 - 提供用户可感知的重解析入口
+
+## 6. GitHub Pages 部署必读
+
+- GitHub Pages 是纯静态托管，不能直接运行 UNM 服务进程
+- 若要接近本地效果，需额外准备两个远程服务：
+  - 远程 UNM 服务（给前端提供 `/unm-api/...`）
+  - HTTPS 流代理（把 `http://` 音频流转成 `https://` 可播放地址）
+
+推荐配置：
+
+- `VITE_REMOTE_UNM_BASE=https://your-unm.example.com/unm-api`
+- `VITE_STREAM_PROXY_BASE=https://your-stream-proxy.workers.dev`
+
+流代理 Worker 示例代码：
+
+- [stream-proxy-worker.js](file:///d:/blog/ops/stream-proxy-worker.js)

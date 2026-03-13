@@ -33,6 +33,8 @@ jobs:
         run: npm run build
         env:
           GITHUB_ACTIONS: "true"
+          VITE_REMOTE_UNM_BASE: ${{ vars.VITE_REMOTE_UNM_BASE }}
+          VITE_STREAM_PROXY_BASE: ${{ vars.VITE_STREAM_PROXY_BASE }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
