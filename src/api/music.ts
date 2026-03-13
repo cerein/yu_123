@@ -39,6 +39,8 @@ const demoSongs: SongResult[] = [
   }
 ]
 
+const EMERGENCY_PLAYBACK_URLS = demoSongs.map((song) => song.playMusicUrl).filter(Boolean)
+
 const lyricMap: Record<string, ILyric> = {
   'demo-1': {
     lrcTimeArray: [0, 12000, 24000, 36000, 48000],
@@ -79,15 +81,20 @@ const canUseLocalUnm = () => {
   return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 }
 
+const defaultApiBase = () => PUBLIC_API_BASES[0] || '/unm-api'
+
+const shouldUseLocalUnm = () => canUseLocalUnm() && getApiBase() === '/unm-api'
+
 const API_CANDIDATES = () => {
-  const local = canUseLocalUnm() ? ['/unm-api'] : []
-  const saved = localStorage.getItem(API_BASE_KEY)?.trim()
-  return Array.from(new Set([...(saved ? [saved] : []), ...local, ...PUBLIC_API_BASES]))
+  const saved = getApiBase()
+  const local = canUseLocalUnm() && saved === '/unm-api' ? ['/unm-api'] : []
+  return Array.from(new Set([saved, ...local, ...PUBLIC_API_BASES].filter(Boolean)))
 }
 
 const REQUEST_TIMEOUT = 5000
 const URL_FETCH_LEVELS = ['exhigh', 'standard'] as const
 const URL_CACHE_TTL = 10 * 60 * 1000
+const MAX_PLAYABLE_CANDIDATES = 6
 const musicUrlCache = new Map<string, { url: string; expiresAt: number }>()
 
 const buildUrl = (base: string, path: string, query: Record<string, string | number>) => {
@@ -98,7 +105,7 @@ const buildUrl = (base: string, path: string, query: Record<string, string | num
   return `${prefix}${path}?${params.toString()}`
 }
 
-export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || '/unm-api'
+export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || defaultApiBase()
 
 export const setApiBase = (base: string) => {
   const normalized = base.trim()
@@ -447,7 +454,7 @@ export const searchMusic = async (keyword: string): Promise<SongResult[]> => {
 }
 
 export const getSongDuration = async (id: number | string): Promise<number | undefined> => {
-  if (canUseLocalUnm()) {
+  if (shouldUseLocalUnm()) {
     try {
       const detailRaw = await requestJson<{ songs?: Array<{ dt?: number }> }>(
         buildUrl('/unm-api', '/api/v3/song/detail', { c: JSON.stringify([{ id: String(id) }]) })
@@ -495,7 +502,7 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
     return cached.url
   }
 
-  if (canUseLocalUnm()) {
+  if (shouldUseLocalUnm()) {
     for (const level of URL_FETCH_LEVELS) {
       try {
         const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
@@ -595,7 +602,7 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
 }
 
 export const getLyric = async (id: number | string): Promise<ILyric> => {
-  if (canUseLocalUnm()) {
+  if (shouldUseLocalUnm()) {
     try {
       const lyricRaw = await requestJson<{ lrc?: { lyric?: string } }>(
         buildUrl('/unm-api', '/api/song/lyric', { id: String(id), lv: -1, tv: -1 })
@@ -650,6 +657,7 @@ export const getLyric = async (id: number | string): Promise<ILyric> => {
 export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> => {
   const candidates: string[] = []
   const pushCandidate = (url?: string) => {
+    if (candidates.length >= MAX_PLAYABLE_CANDIDATES) return
     const normalized = normalizeMediaUrl(url)
     if (!normalized) return
     if (!candidates.includes(normalized)) {
@@ -669,10 +677,10 @@ export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> =
     const fallbackSongs = await withTimeout(searchFromMeting(keyword), 2500)
     const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
     pushCandidate(exact?.playMusicUrl)
-    fallbackSongs.slice(0, 3).forEach((item) => pushCandidate(item.playMusicUrl))
+    fallbackSongs.slice(0, 2).forEach((item) => pushCandidate(item.playMusicUrl))
   } catch {}
 
-  if (candidates.length >= 2) {
+  if (candidates.length >= 3) {
     return candidates
   }
 
@@ -686,9 +694,19 @@ export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> =
       const fallbackSongs = item.value
       const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
       pushCandidate(exact?.playMusicUrl)
-      fallbackSongs.slice(0, 2).forEach((item) => pushCandidate(item.playMusicUrl))
+      fallbackSongs.slice(0, 1).forEach((item) => pushCandidate(item.playMusicUrl))
+      if (candidates.length >= MAX_PLAYABLE_CANDIDATES) {
+        break
+      }
     }
   } catch {}
+
+  for (const url of EMERGENCY_PLAYBACK_URLS) {
+    pushCandidate(url)
+    if (candidates.length >= MAX_PLAYABLE_CANDIDATES) {
+      break
+    }
+  }
 
   return candidates
 }

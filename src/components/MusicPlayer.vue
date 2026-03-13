@@ -58,8 +58,8 @@
               </option>
             </select>
             <p v-if="isSearching" class="state-tip">搜索中...</p>
-            <p v-if="apiTestMsg" class="state-tip">{{ apiTestMsg }}</p>
             <p v-else-if="searchError" class="state-tip error">{{ searchError }}</p>
+            <p v-else-if="apiTestMsg" class="state-tip">{{ apiTestMsg }}</p>
           </div>
           <div class="mini-lyric">
             <p
@@ -618,19 +618,21 @@ const playSong = async (song: SongResult) => {
     if (urls.length === 0) {
       throw new Error('no playable url')
     }
-    if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+    if (signal?.aborted) return
 
     let played = false
     let previewFallbackUrl = ''
+    let attempts = 0
     for (const url of urls) {
-      if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+      if (signal?.aborted) return
+      attempts += 1
       try {
         player.pause()
         player.src = url
         player.load()
         player.playbackRate = playbackRate.value
-        await waitForPlayable(player, 3500)
-        await waitForMetadata(player, 1200)
+        await waitForPlayable(player, 2200)
+        await waitForMetadata(player, 800)
         const sourceDuration = Number.isFinite(player.duration) ? player.duration : 0
         const resolvedSrc = player.currentSrc || url
         if (isLikelyTrialSource(song, sourceDuration, resolvedSrc)) {
@@ -640,6 +642,9 @@ const playSong = async (song: SongResult) => {
           player.pause()
           player.removeAttribute('src')
           player.load()
+          if (attempts >= 2) {
+            break
+          }
           continue
         }
         const progress = safeReadProgress(String(song.id))
@@ -675,18 +680,21 @@ const playSong = async (song: SongResult) => {
         if (isAbortPlayError(error)) {
           return
         }
+        if (previewFallbackUrl && attempts >= 3) {
+          break
+        }
         continue
       }
     }
 
     if (!played && previewFallbackUrl) {
-      if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+      if (signal?.aborted) return
       player.pause()
       player.src = previewFallbackUrl
       player.load()
       player.playbackRate = playbackRate.value
-      await waitForPlayable(player, 3500)
-      await waitForMetadata(player, 1200)
+      await waitForPlayable(player, 2200)
+      await waitForMetadata(player, 800)
       const progress = safeReadProgress(String(song.id))
       if (progress > 0) {
         player.currentTime = progress
@@ -704,7 +712,7 @@ const playSong = async (song: SongResult) => {
     if (!played) {
       throw new Error('all candidate urls failed')
     }
-    if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+    if (signal?.aborted) return
     isPlaying.value = true
     markHistory(String(song.id))
     localStorage.setItem(LAST_SONG_KEY, String(song.id))
@@ -721,7 +729,7 @@ const playSong = async (song: SongResult) => {
     playbackRequestManager.completeRequest(requestId)
     void getLyric(song.id)
       .then((lrc) => {
-        if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+        if (signal?.aborted) return
         lyrics.value = lrc
       })
       .catch(() => {})
