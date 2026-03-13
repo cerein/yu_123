@@ -63,22 +63,12 @@ const lyricMap: Record<string, ILyric> = {
 }
 
 const API_BASE_KEY = 'music_api_base'
-const ITUNES_TRACK_PREFIX = 'itunes-'
-const thirdPartyTrackUrlMap = new Map<string, string>()
-
-// Reliable public Netease API instances
-const PUBLIC_API_BASES = [
-  'https://music-api.gdstudio.xyz',
-  'https://netease-cloud-music-api-psi-indol.vercel.app',
-  'https://music.163.com/api',
-]
-
-// "Parser" APIs that might bypass restrictions or redirect to real URLs
-// These are used as a fallback when standard APIs fail
+const METING_BASE = 'https://api.injahow.cn/meting/'
+const PUBLIC_API_BASES: string[] = []
 const PARSER_APIS = [
-  // Meting-like parsers
-  (id: string) => `https://api.injahow.cn/meting/?type=url&id=${id}`,
-  (id: string) => `https://music.163.com/song/media/outer/url?id=${id}.mp3`, // The classic "outer" link
+  (id: string) => `${METING_BASE}?server=netease&type=url&id=${id}&br=999`,
+  (id: string) => `${METING_BASE}?server=netease&type=url&id=${id}&br=320`,
+  (id: string) => `https://music.163.com/song/media/outer/url?id=${id}.mp3`
 ]
 
 const canUseLocalUnm = () => {
@@ -102,7 +92,7 @@ const buildUrl = (base: string, path: string, query: Record<string, string | num
   return `${prefix}${path}?${params.toString()}`
 }
 
-export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || PUBLIC_API_BASES[0]
+export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || '/unm-api'
 
 export const setApiBase = (base: string) => {
   const normalized = base.trim()
@@ -127,11 +117,38 @@ const requestJson = async <T>(url: string): Promise<T> => {
   }
 }
 
+const requestText = async (url: string) => {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(`request failed: ${response.status}`)
+    }
+    return await response.text()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const requestTextWithFallback = async (url: string) => {
+  try {
+    return await requestText(url)
+  } catch {
+    try {
+      return await requestText(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`)
+    } catch {
+      return await requestText(`https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`)
+    }
+  }
+}
+
 const isUnmBase = (base: string) => base === '/unm-api'
 
 type RawSong = {
   id: number | string
   name: string
+  picUrl?: string
   dt?: number
   duration?: number
   ar?: Array<{ id: number | string; name: string }>
@@ -140,23 +157,46 @@ type RawSong = {
   album?: { id: number | string; name: string; picUrl?: string }
 }
 
+const fallbackCover = (seed: string | number) => `https://picsum.photos/seed/music-${encodeURIComponent(String(seed))}/200/200`
+
+const normalizeCoverUrl = (url?: string) => {
+  if (!url) return ''
+  const trimmed = url.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('//')) {
+    return `https:${trimmed}`
+  }
+  if (trimmed.startsWith('http://')) {
+    return `https://${trimmed.slice(7)}`
+  }
+  return trimmed
+}
+
 const mapSongs = (items: RawSong[]): SongResult[] =>
-  items.map((song) => ({
-    id: song.id,
-    name: song.name,
-    picUrl: song.al?.picUrl || song.album?.picUrl || 'https://picsum.photos/seed/musiccover/200/200',
-    ar: Array.isArray(song.ar)
-      ? song.ar.map((artist) => ({ id: artist.id, name: artist.name }))
-      : Array.isArray(song.artists)
-        ? song.artists.map((artist) => ({ id: artist.id, name: artist.name }))
-        : [{ id: 'unknown', name: '未知歌手' }],
-    al: {
-      id: song.al?.id || song.album?.id || song.id,
-      name: song.al?.name || song.album?.name || '未知专辑',
-      picUrl: song.al?.picUrl || song.album?.picUrl || 'https://picsum.photos/seed/musiccover/200/200'
-    },
-    dt: song.dt || song.duration
-  }))
+  items.map((song) => {
+    const cover =
+      normalizeCoverUrl(song.al?.picUrl) ||
+      normalizeCoverUrl(song.album?.picUrl) ||
+      normalizeCoverUrl(song.picUrl) ||
+      fallbackCover(song.id)
+
+    return {
+      id: song.id,
+      name: song.name,
+      picUrl: cover,
+      ar: Array.isArray(song.ar)
+        ? song.ar.map((artist) => ({ id: artist.id, name: artist.name }))
+        : Array.isArray(song.artists)
+          ? song.artists.map((artist) => ({ id: artist.id, name: artist.name }))
+          : [{ id: 'unknown', name: '未知歌手' }],
+      al: {
+        id: song.al?.id || song.album?.id || song.id,
+        name: song.al?.name || song.album?.name || '未知专辑',
+        picUrl: cover
+      },
+      dt: song.dt || song.duration
+    }
+  })
 
 const parseLrc = (raw: string) => {
   const lines = raw.split('\n').map((item) => item.trim()).filter(Boolean)
@@ -192,6 +232,7 @@ type UrlPayloadItem = {
   freeTrialInfo?: unknown
   time?: number
   size?: number
+  br?: number
 }
 
 const pickBestUrl = (items?: UrlPayloadItem[]) => {
@@ -200,55 +241,57 @@ const pickBestUrl = (items?: UrlPayloadItem[]) => {
     UrlPayloadItem & { url: string }
   >
   if (normalized.length === 0) return ''
-  
-  // STRICT: Filter out items with freeTrialInfo or suspicious short duration/size if we can detect it
   const nonTrial = normalized.filter((item) => !item.freeTrialInfo)
-  
-  if (nonTrial.length > 0) {
-    // Sort by size or duration if available, usually larger is better quality
-    const sorted = [...nonTrial].sort((a, b) => (b.size || 0) - (a.size || 0))
-    return sorted[0].url
-  }
-  
-  return '' // Return empty if only trial available
+  if (nonTrial.length === 0) return ''
+  const sorted = [...nonTrial].sort((a, b) => {
+    const bySize = (b.size || 0) - (a.size || 0)
+    if (bySize !== 0) return bySize
+    const byBitrate = (b.br || 0) - (a.br || 0)
+    if (byBitrate !== 0) return byBitrate
+    return (b.time || 0) - (a.time || 0)
+  })
+  return sorted[0].url
 }
 
-interface ITunesSong {
-  trackId: number
-  trackName: string
-  artistName: string
-  collectionName?: string
-  artworkUrl100?: string
-  previewUrl?: string
-  trackTimeMillis?: number
+type MetingServer = 'netease' | 'tencent' | 'kuwo' | 'kugou' | 'migu'
+
+interface MetingSong {
+  id?: number | string
+  name?: string
+  artist?: string
+  album?: string
+  pic?: string
+  lrc?: string
+  url?: string
+  time?: number
 }
 
-const searchFromITunes = async (keyword: string) => {
+const searchFromMeting = async (keyword: string, server: MetingServer = 'netease') => {
   if (!keyword.trim()) return []
   const term = encodeURIComponent(keyword.trim())
-  const raw = await requestJson<{ resultCount: number; results: ITunesSong[] }>(
-    `https://itunes.apple.com/search?term=${term}&entity=song&limit=30`
+  const raw = await requestJson<MetingSong[]>(
+    `${METING_BASE}?server=${server}&type=search&s=${term}`
   )
-  const list = Array.isArray(raw?.results) ? raw.results : []
+  const list = Array.isArray(raw) ? raw : []
   return list
-    .filter((item) => item.previewUrl && item.trackId)
+    .filter((item) => item.id && item.name)
     .map((item) => {
-      const id = `${ITUNES_TRACK_PREFIX}${item.trackId}`
-      if (item.previewUrl) {
-        thirdPartyTrackUrlMap.set(id, item.previewUrl)
-      }
+      const artist = item.artist?.trim() || '未知歌手'
+      const album = item.album?.trim() || '未知专辑'
+      const id = String(item.id)
+      const cover = normalizeCoverUrl(item.pic) || fallbackCover(id)
       return {
         id,
-        name: item.trackName,
-        picUrl: item.artworkUrl100 || 'https://picsum.photos/seed/itunesmusic/200/200',
-        ar: [{ id: `artist-${item.trackId}`, name: item.artistName || '未知歌手' }],
+        name: item.name || '未知歌曲',
+        picUrl: cover,
+        ar: [{ id: `artist-${id}`, name: artist }],
         al: {
-          id: `album-${item.trackId}`,
-          name: item.collectionName || '未知专辑',
-          picUrl: item.artworkUrl100 || 'https://picsum.photos/seed/itunesmusic/200/200'
+          id: `album-${id}`,
+          name: album,
+          picUrl: cover
         },
-        playMusicUrl: item.previewUrl,
-        dt: item.trackTimeMillis
+        playMusicUrl: item.url || undefined,
+        dt: item.time
       } satisfies SongResult
     })
 }
@@ -300,11 +343,9 @@ export const searchMusic = async (keyword: string): Promise<SongResult[]> => {
   }
 
   try {
-    const itunesSongs = await searchFromITunes(normalized)
-    if (itunesSongs.length > 0) return itunesSongs
-  } catch {
-    //
-  }
+    const metingSongs = await searchFromMeting(normalized)
+    if (metingSongs.length > 0) return metingSongs
+  } catch {}
 
   const fallbackKeyword = normalized || 'demo'
   return demoSongs.filter((song) => {
@@ -321,6 +362,18 @@ export const searchMusic = async (keyword: string): Promise<SongResult[]> => {
 }
 
 export const getSongDuration = async (id: number | string): Promise<number | undefined> => {
+  if (canUseLocalUnm()) {
+    try {
+      const detailRaw = await requestJson<{ songs?: Array<{ dt?: number }> }>(
+        buildUrl('/unm-api', '/api/v3/song/detail', { c: JSON.stringify([{ id: String(id) }]) })
+      )
+      const dt = detailRaw?.songs?.[0]?.dt
+      if (typeof dt === 'number' && dt > 0) {
+        return dt
+      }
+    } catch {}
+  }
+
   for (const base of API_CANDIDATES()) {
     try {
       const detailRaw = await requestJson<{ songs?: Array<{ dt?: number }> }>(
@@ -334,47 +387,81 @@ export const getSongDuration = async (id: number | string): Promise<number | und
       continue
     }
   }
+  for (const base of API_CANDIDATES()) {
+    try {
+      const payload = await requestJson<{ data?: UrlPayloadItem[] }>(
+        buildUrl(base, '/song/url/v1', { id: String(id), level: 'standard' })
+      )
+      const time = payload?.data?.[0]?.time
+      if (typeof time === 'number' && time > 0) {
+        return time
+      }
+    } catch {
+      continue
+    }
+  }
   return undefined
 }
 
 export const getMusicUrl = async (id: number | string): Promise<string> => {
-  if (typeof id === 'string' && id.startsWith(ITUNES_TRACK_PREFIX)) {
-    return thirdPartyTrackUrlMap.get(id) || ''
-  }
-
-  // 1. Try Standard APIs with High Quality Flags
-  for (const base of API_CANDIDATES()) {
-    // Try v1 endpoint first (better quality control)
-    try {
-      // Parallel fetch for different qualities to speed up
-      const levels = ['exhigh', 'lossless', 'higher', 'standard']
-      for (const level of levels) {
-         try {
-            const query: Record<string, string | number> = {
-              id: String(id), 
-              level, 
-              encodeType: 'flac'
-            }
-            if (isUnmBase(base)) {
-              query.ids = `["${String(id)}"]`
-            }
-            const rawV1 = await requestJson<{ data?: UrlPayloadItem[] }>(
-              buildUrl(base, isUnmBase(base) ? '/api/song/enhance/player/url/v1' : '/song/url/v1', query)
-            )
-            const urlV1 = pickBestUrl(rawV1?.data)
-            if (urlV1) return urlV1
-         } catch {
-           // ignore single level fail
-         }
-      }
-    } catch {
-      // ignore v1 fail
+  if (canUseLocalUnm()) {
+    for (const level of ['lossless', 'exhigh', 'higher', 'standard']) {
+      try {
+        const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
+          buildUrl('/unm-api', '/api/song/enhance/player/url/v1', {
+            ids: JSON.stringify([String(id)]),
+            level,
+            encodeType: 'flac'
+          })
+        )
+        const url = pickBestUrl(raw?.data)
+        if (url) return url
+      } catch {}
     }
 
-    // Try legacy endpoint
     try {
       const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
-        buildUrl(base, '/song/url', { id: String(id) }) // No level param for basic
+        buildUrl('/unm-api', '/api/song/enhance/player/url', {
+          ids: JSON.stringify([String(id)]),
+          br: 999000
+        })
+      )
+      const url = pickBestUrl(raw?.data)
+      if (url) return url
+    } catch {}
+  }
+
+  for (const base of API_CANDIDATES()) {
+    for (const level of ['lossless', 'exhigh', 'higher', 'standard']) {
+      try {
+        const v1Path = isUnmBase(base) ? '/api/song/enhance/player/url/v1' : '/song/url/v1'
+        const v1Query: Record<string, string | number> = {
+          id: String(id),
+          level,
+          encodeType: 'flac'
+        }
+        if (isUnmBase(base)) {
+          v1Query.ids = `["${String(id)}"]`
+        }
+        const rawV1 = await requestJson<{ data?: UrlPayloadItem[] }>(buildUrl(base, v1Path, v1Query))
+        const urlV1 = pickBestUrl(rawV1?.data)
+        if (urlV1) return urlV1
+      } catch {}
+    }
+
+    for (const level of ['lossless', 'exhigh', 'higher', 'standard']) {
+      try {
+        const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
+          buildUrl(base, '/song/url', { id: String(id), br: 320000, level })
+        )
+        const url = pickBestUrl(raw?.data)
+        if (url) return url
+      } catch {}
+    }
+
+    try {
+      const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
+        buildUrl(base, '/weapi/song/enhance/player/url/v1', { id: String(id), level: 'standard', br: 320000 })
       )
       const url = pickBestUrl(raw?.data)
       if (url) return url
@@ -383,39 +470,67 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
     }
   }
 
-  // 2. Try Parser/Outer Links (Third-party interface)
-  // This satisfies the user's request to use a "parser" if standard fails
   for (const parser of PARSER_APIS) {
     try {
-       const url = parser(String(id))
-       // Simple validation? We can't easily validate without CORS issues, 
-       // but we assume these parsers are the "last resort"
-       if (url) return url
+      const parserUrl = parser(String(id))
+      if (!parserUrl) continue
+      if (parserUrl.includes('meting')) {
+        return parserUrl
+      } else if (/^https?:\/\//i.test(parserUrl)) {
+        return parserUrl
+      }
     } catch {
-       continue
+      continue
     }
   }
 
-  // 3. Demo fallback
   const target = demoSongs.find((item) => item.id === id)
   return target?.playMusicUrl ?? ''
 }
 
 export const getLyric = async (id: number | string): Promise<ILyric> => {
-  for (const base of API_CANDIDATES()) {
+  if (canUseLocalUnm()) {
     try {
-      const lyricRaw = await requestJson<{ lrc?: { lyric?: string }, tlyric?: { lyric?: string } }>(
-        buildUrl(base, '/lyric', { id: String(id) })
+      const lyricRaw = await requestJson<{ lrc?: { lyric?: string } }>(
+        buildUrl('/unm-api', '/api/song/lyric', { id: String(id), lv: -1, tv: -1 })
       )
       const lrcText = lyricRaw?.lrc?.lyric || ''
       if (lrcText) {
         const parsed = parseLrc(lrcText)
-        if (parsed.lrcArray.length > 0) return parsed
+        if (parsed.lrcArray.length > 0) {
+          return parsed
+        }
       }
-    } catch {
-       continue
+    } catch {}
+  }
+
+  for (const base of API_CANDIDATES()) {
+    for (const path of ['/lyric/new', '/lyric', '/api/song/lyric', '/weapi/song/lyric']) {
+      try {
+        const lyricRaw = await requestJson<{ lrc?: { lyric?: string }; klyric?: { lyric?: string }; yrc?: { lyric?: string } }>(
+          buildUrl(base, path, { id: String(id), lv: -1, tv: -1 })
+        )
+        const lrcText = lyricRaw?.lrc?.lyric || lyricRaw?.yrc?.lyric || lyricRaw?.klyric?.lyric || ''
+        if (lrcText) {
+          const parsed = parseLrc(lrcText)
+          if (parsed.lrcArray.length > 0) {
+            return parsed
+          }
+        }
+      } catch {}
     }
   }
+
+  try {
+    const lrcText = (await requestTextWithFallback(`${METING_BASE}?server=netease&type=lrc&id=${String(id)}`)).trim()
+    if (lrcText) {
+      const actualLrc = /^https?:\/\//i.test(lrcText) ? (await requestTextWithFallback(lrcText)).trim() : lrcText
+      const parsed = parseLrc(actualLrc)
+      if (parsed.lrcArray.length > 0) {
+        return parsed
+      }
+    }
+  } catch {}
 
   const key = String(id)
   return (
@@ -435,29 +550,36 @@ export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> =
     }
   }
 
-  pushCandidate(song.playMusicUrl)
-  
   try {
     const freshUrl = await getMusicUrl(song.id)
     pushCandidate(freshUrl)
-  } catch {
-    //
-  }
+  } catch {}
 
   try {
     const keyword = `${song.name} ${song.ar?.[0]?.name || ''}`.trim()
-    const fallbackSongs = await searchFromITunes(keyword)
+    const fallbackSongs = await searchFromMeting(keyword)
     const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
     pushCandidate(exact?.playMusicUrl)
-    fallbackSongs.slice(0, 5).forEach((item) => pushCandidate(item.playMusicUrl))
-  } catch {
-    //
-  }
+    fallbackSongs.slice(0, 3).forEach((item) => pushCandidate(item.playMusicUrl))
+  } catch {}
+
+  try {
+    const keyword = `${song.name} ${song.ar?.[0]?.name || ''}`.trim()
+    for (const server of ['tencent', 'kuwo', 'kugou', 'migu'] as MetingServer[]) {
+      const fallbackSongs = await searchFromMeting(keyword, server)
+      const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
+      pushCandidate(exact?.playMusicUrl)
+      fallbackSongs.slice(0, 2).forEach((item) => pushCandidate(item.playMusicUrl))
+    }
+  } catch {}
+
+  pushCandidate(song.playMusicUrl)
 
   return candidates
 }
 
 export const pingMusicApi = async (base: string) => {
+  if (!base.trim()) return false
   try {
     const url = isUnmBase(base)
       ? buildUrl(base, '/api/search/get/web', { s: '周杰伦', type: 1, limit: 1, offset: 0, total: 1 })
@@ -471,8 +593,11 @@ export const pingMusicApi = async (base: string) => {
 
 export const pingPublicBackup = async () => {
   try {
-    const result = await searchFromITunes('周杰伦')
-    return result.length > 0
+    const meting = await searchFromMeting('周杰伦')
+    if (meting.length > 0) {
+      return true
+    }
+    return false
   } catch {
     return false
   }

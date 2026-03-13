@@ -539,6 +539,46 @@ const waitForPlayable = (player: HTMLAudioElement, timeoutMs = 6000) =>
     player.addEventListener('error', onError, { once: true })
   })
 
+const waitForMetadata = (player: HTMLAudioElement, timeoutMs = 2000) =>
+  new Promise<void>((resolve) => {
+    if (Number.isFinite(player.duration) && player.duration > 0) {
+      resolve()
+      return
+    }
+    const cleanup = () => {
+      player.removeEventListener('loadedmetadata', onLoadedMeta)
+      player.removeEventListener('durationchange', onDurationChange)
+      window.clearTimeout(timer)
+    }
+    const done = () => {
+      cleanup()
+      resolve()
+    }
+    const onLoadedMeta = () => done()
+    const onDurationChange = () => {
+      if (Number.isFinite(player.duration) && player.duration > 0) {
+        done()
+      }
+    }
+    const timer = window.setTimeout(done, timeoutMs)
+    player.addEventListener('loadedmetadata', onLoadedMeta, { once: true })
+    player.addEventListener('durationchange', onDurationChange)
+  })
+
+const isLikelyTrialSource = (song: SongResult, sourceDurationSec: number, currentSrc: string) => {
+  if (String(song.id).startsWith('local-')) return false
+  if (/jd-musicrep-ts|jymusic|404/i.test(currentSrc)) return true
+  if (!Number.isFinite(sourceDurationSec) || sourceDurationSec <= 0) return false
+  if (sourceDurationSec >= 29 && sourceDurationSec <= 31) return true
+  const expectedSec = (song.dt || 0) / 1000
+  if (expectedSec <= 60) {
+    return sourceDurationSec <= 35
+  }
+  if (sourceDurationSec <= 31 && expectedSec >= 90) return true
+  if (sourceDurationSec < expectedSec * 0.55 && sourceDurationSec <= 45) return true
+  return false
+}
+
 const triggerFileInput = () => {
   fileInput.value?.click()
 }
@@ -570,7 +610,6 @@ const playSong = async (song: SongResult) => {
     return
   }
 
-  // Optimize: Fetch accurate duration if missing (often 0 in search results)
   if (!song.dt || song.dt === 0) {
     getSongDuration(song.id).then((dt) => {
       if (dt && dt > 0) {
@@ -606,6 +645,15 @@ const playSong = async (song: SongResult) => {
         player.load()
         player.playbackRate = playbackRate.value
         await waitForPlayable(player, 7000)
+        await waitForMetadata(player, 1800)
+        const sourceDuration = Number.isFinite(player.duration) ? player.duration : 0
+        const resolvedSrc = player.currentSrc || url
+        if (isLikelyTrialSource(song, sourceDuration, resolvedSrc)) {
+          player.pause()
+          player.removeAttribute('src')
+          player.load()
+          continue
+        }
         const progress = safeReadProgress(String(song.id))
         if (progress > 0) {
           player.currentTime = progress
@@ -621,6 +669,18 @@ const playSong = async (song: SongResult) => {
         }
 
         currentSong.value = { ...song, playMusicUrl: url }
+        if (Number.isFinite(player.duration) && player.duration > 0) {
+          duration.value = player.duration
+        } else if (song.dt && song.dt > 0) {
+          duration.value = song.dt / 1000
+        } else {
+          getSongDuration(song.id).then((dt) => {
+            if (dt && dt > 0 && currentSong.value && String(currentSong.value.id) === String(song.id)) {
+              duration.value = dt / 1000
+              currentSong.value = { ...currentSong.value, dt }
+            }
+          })
+        }
         played = true
         break
       } catch (error) {
@@ -733,13 +793,25 @@ const handleEnded = async () => {
 
 const handleLoadedMeta = () => {
   if (!audioPlayer.value) return
-  duration.value = Number.isFinite(audioPlayer.value.duration) ? audioPlayer.value.duration : 0
+  const metaDuration = Number.isFinite(audioPlayer.value.duration) ? audioPlayer.value.duration : 0
+  if (metaDuration > 0) {
+    duration.value = metaDuration
+    return
+  }
+  if (currentSong.value?.dt && currentSong.value.dt > 0) {
+    duration.value = currentSong.value.dt / 1000
+  }
 }
 
 const updateTime = () => {
   if (!audioPlayer.value) return
   currentTime.value = audioPlayer.value.currentTime
-  duration.value = Number.isFinite(audioPlayer.value.duration) ? audioPlayer.value.duration : 0
+  const liveDuration = Number.isFinite(audioPlayer.value.duration) ? audioPlayer.value.duration : 0
+  if (liveDuration > 0) {
+    duration.value = liveDuration
+  } else if (currentSong.value?.dt && currentSong.value.dt > 0) {
+    duration.value = currentSong.value.dt / 1000
+  }
   const now = Date.now()
   if (currentSong.value && now - lastProgressSaveAt.value > 1000) {
     lastProgressSaveAt.value = now
@@ -863,13 +935,16 @@ onMounted(async () => {
 <style scoped>
 .page-shell {
   min-height: 100vh;
-  background: radial-gradient(circle at 30% -10%, #2f3136 0%, #111216 44%, #0a0b0d 100%);
+  background:
+    radial-gradient(circle at 18% -16%, rgba(255, 135, 196, 0.18) 0%, rgba(255, 135, 196, 0) 42%),
+    radial-gradient(circle at 90% 0%, rgba(108, 186, 255, 0.12) 0%, rgba(108, 186, 255, 0) 34%),
+    linear-gradient(180deg, #14171d 0%, #0b0d11 100%);
   color: #f1f1f1;
 }
 
 .top-banner {
   background: linear-gradient(180deg, #c8f5ff 0%, #dffbff 100%);
-  padding-top: 18px;
+  padding-top: 20px;
   border-bottom: 1px solid #2d2f33;
 }
 
@@ -883,7 +958,7 @@ onMounted(async () => {
 
 .title {
   width: min(1220px, 96vw);
-  margin: 6px auto 16px;
+  margin: 8px auto 18px;
   text-align: center;
   color: #fff;
   font-size: clamp(32px, 5vw, 58px);
@@ -916,11 +991,11 @@ onMounted(async () => {
 }
 
 .content-layout {
-  width: min(1220px, 96vw);
-  margin: 14px auto 0;
+  width: min(1240px, 96vw);
+  margin: 16px auto 0;
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 14px;
+  grid-template-columns: 306px 1fr;
+  gap: 16px;
   align-items: start;
 }
 
@@ -933,14 +1008,19 @@ onMounted(async () => {
 
 .card,
 .pink-card {
-  border: 1px solid #34373e;
+  border: 1px solid #3a3f49;
   border-radius: 10px;
-  background: #202328;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  background: #1a1e25;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
 }
 
 .card {
   padding: 12px;
+}
+
+.mini-player {
+  position: sticky;
+  top: 14px;
 }
 
 .card-title {
@@ -1120,11 +1200,11 @@ onMounted(async () => {
 }
 
 .pink-head {
-  min-height: 42px;
+  min-height: 38px;
   padding: 0 14px;
   display: flex;
   align-items: center;
-  background: #ffb4da;
+  background: linear-gradient(90deg, #ff9dd0 0%, #ffb5dc 100%);
   color: #ffffff;
   font-weight: 700;
   font-size: 14px;
@@ -1145,8 +1225,9 @@ onMounted(async () => {
 
 .pink-body {
   padding: 14px;
-  color: #d7dde6;
+  color: #dce2ec;
   line-height: 1.75;
+  background: linear-gradient(180deg, #1c2028 0%, #171b22 100%);
 }
 
 .intro-row {
@@ -1255,11 +1336,18 @@ onMounted(async () => {
   grid-template-columns: 54px 1fr auto;
   gap: 10px;
   align-items: center;
-  border: 1px solid #424955;
+  border: 1px solid #495160;
   border-radius: 8px;
   padding: 8px;
-  background: #191d24;
+  background: #161b22;
   cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.song-item:hover {
+  border-color: #ff7fbe;
+  background: #25202c;
+  transform: translateY(-1px);
 }
 
 .song-item.active {
@@ -1338,9 +1426,9 @@ onMounted(async () => {
 }
 
 .page-footer {
-  width: min(1220px, 96vw);
-  margin: 14px auto 0;
-  padding: 20px 8px 28px;
+  width: min(1240px, 96vw);
+  margin: 18px auto 0;
+  padding: 22px 8px 30px;
   text-align: center;
   color: #8d95a2;
   font-size: 12px;
@@ -1492,12 +1580,8 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 
-  .main-panel {
-    order: 1;
-  }
-
-  .left-panel {
-    order: 2;
+  .mini-player {
+    position: static;
   }
 
   .api-row {
@@ -1512,10 +1596,27 @@ onMounted(async () => {
 @media (max-width: 520px) {
   .title {
     letter-spacing: 0;
+    font-size: clamp(28px, 8vw, 36px);
   }
 
   .pink-body {
     padding: 12px;
+  }
+
+  .content-layout {
+    width: min(1240px, 97vw);
+    gap: 12px;
+  }
+
+  .song-item {
+    grid-template-columns: 48px 1fr auto;
+    gap: 8px;
+    padding: 7px;
+  }
+
+  .song-cover {
+    width: 48px;
+    height: 48px;
   }
 }
 </style>

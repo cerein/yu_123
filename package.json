@@ -5,22 +5,26 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:unm": "concurrently \"npm:unm\" \"npm:dev\"",
+    "unm": "npx @unblockneteasemusic/server -p 3100 -o kugou kuwo bilibili",
     "build": "vue-tsc && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "pinia": "^3.0.4",
     "vue": "^3.5.30",
-    "vue-router": "^4.6.4",
-    "pinia": "^3.0.4"
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@unblockneteasemusic/server": "^0.27.10",
     "@vitejs/plugin-vue": "^5.2.4",
+    "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
+    "postcss": "^8.5.8",
+    "sass": "^1.98.0",
+    "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",
     "vite": "^6.4.1",
-    "vue-tsc": "^2.2.12",
-    "tailwindcss": "^3.4.19",
-    "postcss": "^8.5.8",
-    "autoprefixer": "^10.4.27",
-    "sass": "^1.98.0"
+    "vue-tsc": "^2.2.12"
   }
 }
