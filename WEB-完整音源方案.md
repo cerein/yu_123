@@ -63,6 +63,10 @@
 - `VITE_REMOTE_UNM_BASE=https://your-unm.example.com/unm-api`
 - `VITE_STREAM_PROXY_BASE=https://your-stream-proxy.workers.dev`
 
+远程 UNM 容器示例：
+
+- [Dockerfile.unm](file:///d:/blog/ops/Dockerfile.unm)
+
 流代理 Worker 示例代码：
 
 - [stream-proxy-worker.js](file:///d:/blog/ops/stream-proxy-worker.js)
