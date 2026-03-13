@@ -143,6 +143,15 @@ const requestTextWithFallback = async (url: string) => {
   }
 }
 
+const requestJsonWithFallback = async <T>(url: string): Promise<T> => {
+  try {
+    return await requestJson<T>(url)
+  } catch {
+    const raw = await requestTextWithFallback(url)
+    return JSON.parse(raw) as T
+  }
+}
+
 const isUnmBase = (base: string) => base === '/unm-api'
 
 type RawSong = {
@@ -266,10 +275,20 @@ interface MetingSong {
   time?: number
 }
 
+interface ItunesSong {
+  trackId?: number
+  trackName?: string
+  artistName?: string
+  collectionName?: string
+  artworkUrl100?: string
+  previewUrl?: string
+  trackTimeMillis?: number
+}
+
 const searchFromMeting = async (keyword: string, server: MetingServer = 'netease') => {
   if (!keyword.trim()) return []
   const term = encodeURIComponent(keyword.trim())
-  const raw = await requestJson<MetingSong[]>(
+  const raw = await requestJsonWithFallback<MetingSong[]>(
     `${METING_BASE}?server=${server}&type=search&s=${term}`
   )
   const list = Array.isArray(raw) ? raw : []
@@ -292,6 +311,33 @@ const searchFromMeting = async (keyword: string, server: MetingServer = 'netease
         },
         playMusicUrl: item.url || undefined,
         dt: item.time
+      } satisfies SongResult
+    })
+}
+
+const searchFromItunes = async (keyword: string) => {
+  const term = encodeURIComponent(keyword.trim() || 'jay chou')
+  const raw = await requestJsonWithFallback<{ results?: ItunesSong[] }>(
+    `https://itunes.apple.com/search?term=${term}&entity=song&limit=25`
+  )
+  const list = Array.isArray(raw?.results) ? raw.results : []
+  return list
+    .filter((item) => item.trackId && item.trackName)
+    .map((item) => {
+      const id = String(item.trackId)
+      const cover = normalizeCoverUrl(item.artworkUrl100) || fallbackCover(id)
+      return {
+        id: `itunes-${id}`,
+        name: item.trackName || '未知歌曲',
+        picUrl: cover,
+        ar: [{ id: `itunes-artist-${id}`, name: item.artistName || '未知歌手' }],
+        al: {
+          id: `itunes-album-${id}`,
+          name: item.collectionName || '未知专辑',
+          picUrl: cover
+        },
+        playMusicUrl: item.previewUrl || undefined,
+        dt: item.trackTimeMillis
       } satisfies SongResult
     })
 }
@@ -345,6 +391,11 @@ export const searchMusic = async (keyword: string): Promise<SongResult[]> => {
   try {
     const metingSongs = await searchFromMeting(normalized)
     if (metingSongs.length > 0) return metingSongs
+  } catch {}
+
+  try {
+    const itunesSongs = await searchFromItunes(normalized)
+    if (itunesSongs.length > 0) return itunesSongs
   } catch {}
 
   const fallbackKeyword = normalized || 'demo'
