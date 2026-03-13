@@ -629,8 +629,8 @@ const playSong = async (song: SongResult) => {
         player.src = url
         player.load()
         player.playbackRate = playbackRate.value
-        await waitForPlayable(player, 7000)
-        await waitForMetadata(player, 1800)
+        await waitForPlayable(player, 3500)
+        await waitForMetadata(player, 1200)
         const sourceDuration = Number.isFinite(player.duration) ? player.duration : 0
         const resolvedSrc = player.currentSrc || url
         if (isLikelyTrialSource(song, sourceDuration, resolvedSrc)) {
@@ -685,8 +685,8 @@ const playSong = async (song: SongResult) => {
       player.src = previewFallbackUrl
       player.load()
       player.playbackRate = playbackRate.value
-      await waitForPlayable(player, 7000)
-      await waitForMetadata(player, 1800)
+      await waitForPlayable(player, 3500)
+      await waitForMetadata(player, 1200)
       const progress = safeReadProgress(String(song.id))
       if (progress > 0) {
         player.currentTime = progress
@@ -718,10 +718,13 @@ const playSong = async (song: SongResult) => {
       navigator.mediaSession.playbackState = 'playing'
     }
 
-    const lrc = await getLyric(song.id)
-    if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
-    lyrics.value = lrc
     playbackRequestManager.completeRequest(requestId)
+    void getLyric(song.id)
+      .then((lrc) => {
+        if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+        lyrics.value = lrc
+      })
+      .catch(() => {})
   } catch (error) {
     if (isAbortPlayError(error)) {
       return

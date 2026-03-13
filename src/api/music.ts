@@ -85,7 +85,10 @@ const API_CANDIDATES = () => {
   return Array.from(new Set([...(saved ? [saved] : []), ...local, ...PUBLIC_API_BASES]))
 }
 
-const REQUEST_TIMEOUT = 8000
+const REQUEST_TIMEOUT = 5000
+const URL_FETCH_LEVELS = ['exhigh', 'standard'] as const
+const URL_CACHE_TTL = 10 * 60 * 1000
+const musicUrlCache = new Map<string, { url: string; expiresAt: number }>()
 
 const buildUrl = (base: string, path: string, query: Record<string, string | number>) => {
   const prefix = base.endsWith('/') ? base.slice(0, -1) : base
@@ -154,6 +157,21 @@ const requestJsonWithFallback = async <T>(url: string): Promise<T> => {
     return JSON.parse(raw) as T
   }
 }
+
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number) =>
+  new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error('timeout')), timeoutMs)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 
 const isUnmBase = (base: string) => base === '/unm-api'
 
@@ -471,8 +489,14 @@ export const getSongDuration = async (id: number | string): Promise<number | und
 }
 
 export const getMusicUrl = async (id: number | string): Promise<string> => {
+  const cacheKey = String(id)
+  const cached = musicUrlCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now() && cached.url) {
+    return cached.url
+  }
+
   if (canUseLocalUnm()) {
-    for (const level of ['lossless', 'exhigh', 'higher', 'standard']) {
+    for (const level of URL_FETCH_LEVELS) {
       try {
         const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
           buildUrl('/unm-api', '/api/song/enhance/player/url/v1', {
@@ -482,7 +506,10 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
           })
         )
         const url = pickBestUrl(raw?.data)
-        if (url) return url
+        if (url) {
+          musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
+          return url
+        }
       } catch {}
     }
 
@@ -494,12 +521,15 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
         })
       )
       const url = pickBestUrl(raw?.data)
-      if (url) return url
+      if (url) {
+        musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
+        return url
+      }
     } catch {}
   }
 
   for (const base of API_CANDIDATES()) {
-    for (const level of ['lossless', 'exhigh', 'higher', 'standard']) {
+    for (const level of URL_FETCH_LEVELS) {
       try {
         const v1Path = isUnmBase(base) ? '/api/song/enhance/player/url/v1' : '/song/url/v1'
         const v1Query: Record<string, string | number> = {
@@ -512,17 +542,23 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
         }
         const rawV1 = await requestJson<{ data?: UrlPayloadItem[] }>(buildUrl(base, v1Path, v1Query))
         const urlV1 = pickBestUrl(rawV1?.data)
-        if (urlV1) return urlV1
+        if (urlV1) {
+          musicUrlCache.set(cacheKey, { url: urlV1, expiresAt: Date.now() + URL_CACHE_TTL })
+          return urlV1
+        }
       } catch {}
     }
 
-    for (const level of ['lossless', 'exhigh', 'higher', 'standard']) {
+    for (const level of URL_FETCH_LEVELS) {
       try {
         const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
           buildUrl(base, '/song/url', { id: String(id), br: 320000, level })
         )
         const url = pickBestUrl(raw?.data)
-        if (url) return url
+        if (url) {
+          musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
+          return url
+        }
       } catch {}
     }
 
@@ -531,7 +567,10 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
         buildUrl(base, '/weapi/song/enhance/player/url/v1', { id: String(id), level: 'standard', br: 320000 })
       )
       const url = pickBestUrl(raw?.data)
-      if (url) return url
+      if (url) {
+        musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
+        return url
+      }
     } catch {
       continue
     }
@@ -542,9 +581,9 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
       const parserUrl = parser(String(id))
       if (!parserUrl) continue
       if (parserUrl.includes('meting')) {
-        return parserUrl
+        return normalizeMediaUrl(parserUrl)
       } else if (/^https?:\/\//i.test(parserUrl)) {
-        return parserUrl
+        return normalizeMediaUrl(parserUrl)
       }
     } catch {
       continue
@@ -618,30 +657,38 @@ export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> =
     }
   }
 
+  pushCandidate(song.playMusicUrl)
+  const keyword = `${song.name} ${song.ar?.[0]?.name || ''}`.trim()
+
   try {
-    const freshUrl = await getMusicUrl(song.id)
+    const freshUrl = await withTimeout(getMusicUrl(song.id), 2200)
     pushCandidate(freshUrl)
   } catch {}
 
   try {
-    const keyword = `${song.name} ${song.ar?.[0]?.name || ''}`.trim()
-    const fallbackSongs = await searchFromMeting(keyword)
+    const fallbackSongs = await withTimeout(searchFromMeting(keyword), 2500)
     const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
     pushCandidate(exact?.playMusicUrl)
     fallbackSongs.slice(0, 3).forEach((item) => pushCandidate(item.playMusicUrl))
   } catch {}
 
+  if (candidates.length >= 2) {
+    return candidates
+  }
+
   try {
-    const keyword = `${song.name} ${song.ar?.[0]?.name || ''}`.trim()
-    for (const server of ['tencent', 'kuwo', 'kugou', 'migu'] as MetingServer[]) {
-      const fallbackSongs = await searchFromMeting(keyword, server)
+    const backupTasks = ['tencent', 'kuwo', 'kugou', 'migu'].map((server) =>
+      withTimeout(searchFromMeting(keyword, server as MetingServer), 2200)
+    )
+    const settled = await Promise.allSettled(backupTasks)
+    for (const item of settled) {
+      if (item.status !== 'fulfilled') continue
+      const fallbackSongs = item.value
       const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
       pushCandidate(exact?.playMusicUrl)
       fallbackSongs.slice(0, 2).forEach((item) => pushCandidate(item.playMusicUrl))
     }
   } catch {}
-
-  pushCandidate(song.playMusicUrl)
 
   return candidates
 }
