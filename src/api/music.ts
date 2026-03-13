@@ -66,12 +66,18 @@ const API_BASE_KEY = 'music_api_base'
 const ITUNES_TRACK_PREFIX = 'itunes-'
 const thirdPartyTrackUrlMap = new Map<string, string>()
 const DEFAULT_UNLOCK_BASES = ['http://127.0.0.1:3100', 'http://localhost:3100']
+const PUBLIC_API_BASES = ['https://music-api.gdstudio.xyz']
+const canUseLocalUnm = () => {
+  if (typeof window === 'undefined') return false
+  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+}
 const API_CANDIDATES = () =>
   Array.from(
     new Set(
       [
         localStorage.getItem(API_BASE_KEY)?.trim(),
-        '/unm-api'
+        ...PUBLIC_API_BASES,
+        canUseLocalUnm() ? '/unm-api' : ''
       ].filter((item): item is string => Boolean(item))
     )
   )
@@ -86,7 +92,7 @@ const buildUrl = (base: string, path: string, query: Record<string, string | num
   return `${prefix}${path}?${params.toString()}`
 }
 
-export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || '/unm-api'
+export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || PUBLIC_API_BASES[0]
 
 export const setApiBase = (base: string) => {
   const normalized = base.trim()
@@ -346,12 +352,14 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
     }
 
     try {
-      const rawV1 = await requestJson<{ data?: Array<{ url?: string | null }> }>(
-        buildUrl(base, '/song/url/v1', { id: String(id), level: 'standard' })
-      )
-      const urlV1 = rawV1?.data?.[0]?.url
-      if (urlV1) {
-        return urlV1
+      for (const level of ['exhigh', 'lossless', 'higher', 'standard']) {
+        const rawV1 = await requestJson<{ data?: Array<{ url?: string | null }> }>(
+          buildUrl(base, '/song/url/v1', { id: String(id), level })
+        )
+        const urlV1 = rawV1?.data?.[0]?.url
+        if (urlV1) {
+          return urlV1
+        }
       }
     } catch {
       try {
@@ -385,21 +393,25 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
   const unlockBases = Array.from(new Set([...API_CANDIDATES(), ...DEFAULT_UNLOCK_BASES]))
   for (const base of unlockBases) {
     try {
-      const unlockRaw = await requestJson<any>(
-        buildUrl(base, '/unlock/song/url', { id: String(id), quality: 'standard' })
-      )
-      const unlockedUrl = extractUrlFromPayload(unlockRaw)
-      if (unlockedUrl) {
-        return unlockedUrl
-      }
-    } catch {
-      try {
+      for (const quality of ['lossless', 'exhigh', 'higher', 'standard']) {
         const unlockRaw = await requestJson<any>(
-          buildUrl(base, '/unblock/song/url', { id: String(id), quality: 'standard' })
+          buildUrl(base, '/unlock/song/url', { id: String(id), quality })
         )
         const unlockedUrl = extractUrlFromPayload(unlockRaw)
         if (unlockedUrl) {
           return unlockedUrl
+        }
+      }
+    } catch {
+      try {
+        for (const quality of ['lossless', 'exhigh', 'higher', 'standard']) {
+          const unlockRaw = await requestJson<any>(
+            buildUrl(base, '/unblock/song/url', { id: String(id), quality })
+          )
+          const unlockedUrl = extractUrlFromPayload(unlockRaw)
+          if (unlockedUrl) {
+            return unlockedUrl
+          }
         }
       } catch {
         continue

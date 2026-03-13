@@ -282,6 +282,13 @@ const playbackRateLabel = computed(() => `${playbackRate.value.toFixed(1)}x`)
 
 const currentLyricWindow = computed(() => {
   const lines = lyrics.value?.lrcArray || []
+  const pickText = (line?: { text?: string; trText?: string }) => {
+    const main = line?.text?.trim()
+    if (main) return main
+    const trans = line?.trText?.trim()
+    if (trans) return trans
+    return '♪'
+  }
   if (!lines.length) {
     return [
       { key: 'empty-prev', kind: 'prev', text: '' },
@@ -290,9 +297,9 @@ const currentLyricWindow = computed(() => {
     ]
   }
   const index = Math.max(0, Math.min(currentLyricIndex.value, lines.length - 1))
-  const prev = lines[index - 1]?.text || ''
-  const current = lines[index]?.text || ''
-  const next = lines[index + 1]?.text || ''
+  const prev = pickText(lines[index - 1])
+  const current = pickText(lines[index])
+  const next = pickText(lines[index + 1])
   return [
     { key: `prev-${index - 1}`, kind: 'prev', text: prev },
     { key: `current-${index}`, kind: 'current', text: current },
@@ -1054,6 +1061,7 @@ onMounted(async () => {
 }
 
 .mini-lyric-line.current .mini-lyric-text {
+  color: #ffd9ef;
   --line-progress: 0%;
   background: linear-gradient(
     90deg,
@@ -1064,7 +1072,13 @@ onMounted(async () => {
   );
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .mini-lyric-line.current .mini-lyric-text {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
 }
 
 .quick-grid {
