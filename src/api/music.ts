@@ -39,7 +39,8 @@ const demoSongs: SongResult[] = [
   }
 ]
 
-const EMERGENCY_PLAYBACK_URLS = demoSongs.map((song) => song.playMusicUrl).filter(Boolean)
+const FIXED_NETEASE_AUDIO_PREFIX = 'https://m701.music.126.net/'
+const EMERGENCY_PLAYBACK_URLS: string[] = []
 
 const lyricMap: Record<string, ILyric> = {
   'demo-1': {
@@ -67,35 +68,46 @@ const lyricMap: Record<string, ILyric> = {
 const API_BASE_KEY = 'music_api_base'
 const METING_BASE = 'https://api.injahow.cn/meting/'
 const PUBLIC_API_BASES: string[] = [
+  'https://ncm.zhenxin.me',
+  'https://zm.wwoyun.cn',
+  'https://zm.i9mr.com',
   'https://netease-cloud-music-api-beta-lyart.vercel.app'
 ]
 export const API_PRESET_BASES: string[] = ['/unm-api', ...PUBLIC_API_BASES]
-const PARSER_APIS = [
-  (id: string) => `${METING_BASE}?server=netease&type=url&id=${id}&br=999`,
-  (id: string) => `${METING_BASE}?server=netease&type=url&id=${id}&br=320`,
-  (id: string) => `https://music.163.com/song/media/outer/url?id=${id}.mp3`
-]
-
 const canUseLocalUnm = () => {
   if (typeof window === 'undefined') return false
   return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 }
 
-const defaultApiBase = () => PUBLIC_API_BASES[0] || '/unm-api'
+const normalizeApiBase = (base: string) => {
+  const trimmed = base.trim()
+  if (!trimmed) return ''
+  if (trimmed.includes('/unm-api')) return '/unm-api'
+  return trimmed.replace(/\/+$/, '')
+}
 
-const shouldUseLocalUnm = () => canUseLocalUnm() && getApiBase() === '/unm-api'
+const defaultApiBase = () => PUBLIC_API_BASES[0] || METING_BASE
+
+const shouldUseLocalUnm = () => canUseLocalUnm()
 
 const API_CANDIDATES = () => {
-  const saved = getApiBase()
-  const local = canUseLocalUnm() && saved === '/unm-api' ? ['/unm-api'] : []
-  return Array.from(new Set([saved, ...local, ...PUBLIC_API_BASES].filter(Boolean)))
+  const saved = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
+  const local = canUseLocalUnm() ? ['/unm-api'] : []
+  return Array.from(new Set([...local, saved, ...PUBLIC_API_BASES].filter(Boolean)))
 }
 
 const REQUEST_TIMEOUT = 5000
 const URL_FETCH_LEVELS = ['exhigh', 'standard'] as const
 const URL_CACHE_TTL = 10 * 60 * 1000
+const RESOLVE_CACHE_TTL = 5 * 60 * 1000
 const MAX_PLAYABLE_CANDIDATES = 6
+const STRATEGY_FAILED_CACHE_TTL = 60 * 1000
+const STRATEGY_RETRY_COUNT = 2
+const CUSTOM_API_PLUGIN_KEYS = ['custom_api_plugin', 'customApiPlugin']
 const musicUrlCache = new Map<string, { url: string; expiresAt: number }>()
+const resolveUrlCache = new Map<string, { urls: string[]; expiresAt: number }>()
+const sourceHealthMap = new Map<string, { score: number; updatedAt: number }>()
+const strategyFailedCacheMap = new Map<string, number>()
 
 const buildUrl = (base: string, path: string, query: Record<string, string | number>) => {
   const prefix = base.endsWith('/') ? base.slice(0, -1) : base
@@ -105,10 +117,15 @@ const buildUrl = (base: string, path: string, query: Record<string, string | num
   return `${prefix}${path}?${params.toString()}`
 }
 
-export const getApiBase = () => localStorage.getItem(API_BASE_KEY)?.trim() || defaultApiBase()
+export const getApiBase = () => {
+  const saved = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
+  if (saved) return saved
+  if (canUseLocalUnm()) return '/unm-api'
+  return defaultApiBase()
+}
 
 export const setApiBase = (base: string) => {
-  const normalized = base.trim()
+  const normalized = normalizeApiBase(base)
   if (!normalized) {
     localStorage.removeItem(API_BASE_KEY)
     return
@@ -180,7 +197,7 @@ const withTimeout = <T>(promise: Promise<T>, timeoutMs: number) =>
     )
   })
 
-const isUnmBase = (base: string) => base === '/unm-api'
+const isUnmBase = (base: string) => normalizeApiBase(base) === '/unm-api'
 
 type RawSong = {
   id: number | string
@@ -213,13 +230,61 @@ const normalizeMediaUrl = (url?: string | null) => {
   if (!url) return ''
   const trimmed = url.trim()
   if (!trimmed) return ''
+  if (trimmed.startsWith('/unm-api')) {
+    return trimmed
+  }
   if (trimmed.startsWith('//')) {
-    return `https:${trimmed}`
+    return normalizeMediaUrl(`https:${trimmed}`)
   }
   if (trimmed.startsWith('http://')) {
-    return `https://${trimmed.slice(7)}`
+    return normalizeMediaUrl(`https://${trimmed.slice(7)}`)
   }
-  return trimmed
+  if (trimmed.startsWith('https://')) {
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.hostname === 'music.163.com' && parsed.pathname.startsWith('/package/') && canUseLocalUnm()) {
+        return `/unm-api${parsed.pathname}${parsed.search}`
+      }
+      if (parsed.hostname.endsWith('.music.126.net')) {
+        const tail = `${parsed.pathname.replace(/^\/+/, '')}${parsed.search}`
+        if (tail) return `${FIXED_NETEASE_AUDIO_PREFIX}${tail}`
+      }
+    } catch {}
+    return trimmed
+  }
+  const tail = trimmed.replace(/^\/+/, '')
+  if (tail.includes('/')) {
+    return `${FIXED_NETEASE_AUDIO_PREFIX}${tail}`
+  }
+  return ''
+}
+
+const getSourceKey = (url: string) => {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return 'unknown'
+  }
+}
+
+const getSourceScore = (url: string) => sourceHealthMap.get(getSourceKey(url))?.score ?? 0
+
+const rankCandidates = (urls: string[]) => [...urls].sort((a, b) => getSourceScore(b) - getSourceScore(a))
+
+export const reportPlaybackResult = (url: string, success: boolean) => {
+  const normalized = normalizeMediaUrl(url)
+  if (!normalized) return
+  const key = getSourceKey(normalized)
+  const prev = sourceHealthMap.get(key) ?? { score: 0, updatedAt: 0 }
+  const nextScore = success ? Math.min(prev.score + 1, 8) : Math.max(prev.score - 2, -8)
+  sourceHealthMap.set(key, { score: nextScore, updatedAt: Date.now() })
+}
+
+export const invalidateSongSourceCache = (song: Pick<SongResult, 'id' | 'name' | 'ar'>) => {
+  musicUrlCache.delete(String(song.id))
+  const resolveCacheKey = `${String(song.id)}::${song.name}::${song.ar?.[0]?.name || ''}`.toLowerCase()
+  resolveUrlCache.delete(resolveCacheKey)
+  clearSongStrategyFailedCache(song.id)
 }
 
 const mapSongs = (items: RawSong[]): SongResult[] =>
@@ -285,22 +350,188 @@ type UrlPayloadItem = {
   br?: number
 }
 
-const pickBestUrl = (items?: UrlPayloadItem[]) => {
-  if (!Array.isArray(items) || items.length === 0) return ''
-  const normalized = items.filter((item) => typeof item?.url === 'string' && item.url) as Array<
+type UrlCandidate = {
+  url: string
+  previewLikely: boolean
+}
+
+const isLikelyPreviewPayload = (item: UrlPayloadItem, expectedDurationMs = 0) => {
+  if (item.freeTrialInfo) return true
+  const time = typeof item.time === 'number' ? item.time : 0
+  if (expectedDurationMs > 120000 && time > 0) {
+    if (time < Math.min(60000, expectedDurationMs * 0.55)) {
+      return true
+    }
+  }
+  return false
+}
+
+const pickBestUrlCandidate = (items?: UrlPayloadItem[], expectedDurationMs = 0): UrlCandidate | null => {
+  if (!Array.isArray(items) || items.length === 0) return null
+  const withUrl = items.filter((item) => typeof item?.url === 'string' && item.url) as Array<
     UrlPayloadItem & { url: string }
   >
-  if (normalized.length === 0) return ''
-  const nonTrial = normalized.filter((item) => !item.freeTrialInfo)
-  if (nonTrial.length === 0) return ''
-  const sorted = [...nonTrial].sort((a, b) => {
+  if (withUrl.length === 0) return null
+  const normalized: Array<UrlPayloadItem & { url: string; normalizedUrl: string; previewLikely: boolean }> = withUrl
+    .map((item) => ({
+      ...item,
+      normalizedUrl: normalizeMediaUrl(item.url),
+      previewLikely: isLikelyPreviewPayload(item, expectedDurationMs)
+    }))
+    .filter((item) => Boolean(item.normalizedUrl))
+  if (normalized.length === 0) return null
+  const sorted = [...normalized].sort((a, b) => {
+    if (a.previewLikely !== b.previewLikely) return Number(a.previewLikely) - Number(b.previewLikely)
     const bySize = (b.size || 0) - (a.size || 0)
     if (bySize !== 0) return bySize
     const byBitrate = (b.br || 0) - (a.br || 0)
     if (byBitrate !== 0) return byBitrate
     return (b.time || 0) - (a.time || 0)
   })
-  return normalizeMediaUrl(sorted[0].url)
+  return { url: sorted[0].normalizedUrl, previewLikely: sorted[0].previewLikely }
+}
+
+type CustomApiPlugin = {
+  name: string
+  apiUrl: string
+  method?: 'GET' | 'POST'
+  params: Record<string, string>
+  qualityMapping?: Record<string, string>
+  responseUrlPath: string
+}
+
+const getStrategyFailedCacheKey = (songId: string | number, strategyName: string) => `${String(songId)}::${strategyName}`
+
+const isInStrategyFailedCache = (songId: string | number, strategyName: string) => {
+  const key = getStrategyFailedCacheKey(songId, strategyName)
+  const failedAt = strategyFailedCacheMap.get(key)
+  if (!failedAt) return false
+  if (Date.now() - failedAt < STRATEGY_FAILED_CACHE_TTL) return true
+  strategyFailedCacheMap.delete(key)
+  return false
+}
+
+const markStrategyFailed = (songId: string | number, strategyName: string) => {
+  strategyFailedCacheMap.set(getStrategyFailedCacheKey(songId, strategyName), Date.now())
+}
+
+const clearSongStrategyFailedCache = (songId: string | number) => {
+  const prefix = `${String(songId)}::`
+  for (const key of strategyFailedCacheMap.keys()) {
+    if (key.startsWith(prefix)) {
+      strategyFailedCacheMap.delete(key)
+    }
+  }
+}
+
+const waitFor = (delayMs: number) => new Promise<void>((resolve) => window.setTimeout(resolve, delayMs))
+
+const getObjectValueByPath = (target: unknown, path: string) => {
+  if (!path.trim()) return undefined
+  const keys = path
+    .replace(/\[(\d+)\]/g, '.$1')
+    .split('.')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  let current: unknown = target
+  for (const key of keys) {
+    if (!current || typeof current !== 'object') return undefined
+    current = (current as Record<string, unknown>)[key]
+  }
+  return current
+}
+
+const parseCustomApiPlugin = (): CustomApiPlugin | null => {
+  for (const key of CUSTOM_API_PLUGIN_KEYS) {
+    const raw = localStorage.getItem(key)?.trim()
+    if (!raw) continue
+    try {
+      const parsed = JSON.parse(raw) as CustomApiPlugin
+      if (
+        parsed &&
+        typeof parsed.apiUrl === 'string' &&
+        parsed.apiUrl.trim() &&
+        parsed.params &&
+        typeof parsed.params === 'object' &&
+        typeof parsed.responseUrlPath === 'string' &&
+        parsed.responseUrlPath.trim()
+      ) {
+        return parsed
+      }
+    } catch {}
+  }
+  return null
+}
+
+const buildCustomApiParams = (plugin: CustomApiPlugin, songId: string | number, quality: string) => {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(plugin.params || {})) {
+    if (value === '{songId}') {
+      params.set(key, String(songId))
+      continue
+    }
+    if (value === '{quality}') {
+      params.set(key, plugin.qualityMapping?.[quality] || quality)
+      continue
+    }
+    params.set(key, value)
+  }
+  return params
+}
+
+const resolveUrlFromCustomApi = async (songId: string | number, quality = 'higher') => {
+  if (isInStrategyFailedCache(songId, 'custom')) return ''
+  const plugin = parseCustomApiPlugin()
+  if (!plugin) return ''
+  let retryDelay = 240
+  for (let i = 0; i <= STRATEGY_RETRY_COUNT; i += 1) {
+    try {
+      const params = buildCustomApiParams(plugin, songId, quality)
+      const method = (plugin.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET'
+      const controller = new AbortController()
+      const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT * 2)
+      let response: Response
+      try {
+        if (method === 'POST') {
+          response = await fetch(plugin.apiUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(Object.fromEntries(params.entries())),
+            signal: controller.signal
+          })
+        } else {
+          const connector = plugin.apiUrl.includes('?') ? '&' : '?'
+          response = await fetch(`${plugin.apiUrl}${connector}${params.toString()}`, {
+            method: 'GET',
+            signal: controller.signal
+          })
+        }
+      } finally {
+        clearTimeout(timer)
+      }
+      if (!response.ok) {
+        throw new Error(`custom api failed: ${response.status}`)
+      }
+      const text = await response.text()
+      let payload: unknown
+      try {
+        payload = JSON.parse(text)
+      } catch {
+        payload = {}
+      }
+      const rawUrl = getObjectValueByPath(payload, plugin.responseUrlPath)
+      const normalized = normalizeMediaUrl(typeof rawUrl === 'string' ? rawUrl : '')
+      if (normalized) {
+        return normalized
+      }
+    } catch {}
+    if (i < STRATEGY_RETRY_COUNT) {
+      await waitFor(retryDelay)
+      retryDelay *= 2
+    }
+  }
+  markStrategyFailed(songId, 'custom')
+  return ''
 }
 
 type MetingServer = 'netease' | 'tencent' | 'kuwo' | 'kugou' | 'migu'
@@ -324,6 +555,42 @@ interface ItunesSong {
   artworkUrl100?: string
   previewUrl?: string
   trackTimeMillis?: number
+}
+
+const METING_FALLBACK_SERVERS: MetingServer[] = ['kuwo', 'kugou', 'migu', 'tencent', 'netease']
+
+const pickMetingCandidate = (songs: SongResult[], song: SongResult) => {
+  const targetName = (song.name || '').toLowerCase()
+  const targetArtist = (song.ar?.[0]?.name || '').toLowerCase()
+  const targetDuration = song.dt || 0
+  const withUrl = songs.filter((item) => Boolean(item.playMusicUrl))
+  if (withUrl.length === 0) return ''
+  const scored = withUrl
+    .map((item) => {
+      const name = (item.name || '').toLowerCase()
+      const artist = (item.ar?.[0]?.name || '').toLowerCase()
+      const duration = item.dt || 0
+      const nameHit = targetName && name ? (name.includes(targetName) || targetName.includes(name) ? 1 : 0) : 0
+      const artistHit =
+        targetArtist && artist ? (artist.includes(targetArtist) || targetArtist.includes(artist) ? 1 : 0) : 0
+      const durationGap = targetDuration > 0 && duration > 0 ? Math.abs(targetDuration - duration) : 999999
+      return { item, score: nameHit * 4 + artistHit * 3 - Math.min(durationGap / 1000, 120) / 120 }
+    })
+    .sort((a, b) => b.score - a.score)
+  return normalizeMediaUrl(scored[0]?.item.playMusicUrl) || ''
+}
+
+const resolveUrlFromMetingFallback = async (song: SongResult) => {
+  const keyword = `${song.name || ''} ${song.ar?.[0]?.name || ''}`.trim()
+  if (!keyword) return ''
+  for (const server of METING_FALLBACK_SERVERS) {
+    try {
+      const list = await searchFromMeting(keyword, server)
+      const matched = pickMetingCandidate(list, song)
+      if (matched) return matched
+    } catch {}
+  }
+  return ''
 }
 
 const searchFromMeting = async (keyword: string, server: MetingServer = 'netease') => {
@@ -495,29 +762,46 @@ export const getSongDuration = async (id: number | string): Promise<number | und
   return undefined
 }
 
-export const getMusicUrl = async (id: number | string): Promise<string> => {
+export const getMusicUrl = async (id: number | string, expectedDurationMs = 0): Promise<string> => {
   const cacheKey = String(id)
   const cached = musicUrlCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now() && cached.url) {
     return cached.url
   }
+  let fallbackPreviewUrl = ''
+  const buildUnmV1Queries = (level: string) =>
+    [
+      { ids: JSON.stringify([String(id)]), level, encodeType: 'flac' },
+      { ids: `[${String(id)}]`, level, encodeType: 'flac' },
+      { id: String(id), level, encodeType: 'flac' },
+      { ids: JSON.stringify([String(id)]), level }
+    ] as Array<Record<string, string | number>>
+
+  try {
+    const customUrl = await withTimeout(resolveUrlFromCustomApi(id), 1800)
+    if (customUrl) {
+      fallbackPreviewUrl = customUrl
+    }
+  } catch {}
 
   if (shouldUseLocalUnm()) {
     for (const level of URL_FETCH_LEVELS) {
-      try {
-        const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
-          buildUrl('/unm-api', '/api/song/enhance/player/url/v1', {
-            ids: JSON.stringify([String(id)]),
-            level,
-            encodeType: 'flac'
-          })
-        )
-        const url = pickBestUrl(raw?.data)
-        if (url) {
-          musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
-          return url
-        }
-      } catch {}
+      for (const query of buildUnmV1Queries(level)) {
+        try {
+          const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
+            buildUrl('/unm-api', '/api/song/enhance/player/url/v1', query)
+          )
+          const candidate = pickBestUrlCandidate(raw?.data, expectedDurationMs)
+          if (candidate?.url) {
+            if (!candidate.previewLikely) {
+              musicUrlCache.set(cacheKey, { url: candidate.url, expiresAt: Date.now() + URL_CACHE_TTL })
+              return candidate.url
+            }
+            if (!fallbackPreviewUrl) fallbackPreviewUrl = candidate.url
+            break
+          }
+        } catch {}
+      }
     }
 
     try {
@@ -527,33 +811,37 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
           br: 999000
         })
       )
-      const url = pickBestUrl(raw?.data)
-      if (url) {
-        musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
-        return url
+      const candidate = pickBestUrlCandidate(raw?.data, expectedDurationMs)
+      if (candidate?.url) {
+        if (!candidate.previewLikely) {
+          musicUrlCache.set(cacheKey, { url: candidate.url, expiresAt: Date.now() + URL_CACHE_TTL })
+          return candidate.url
+        }
+        if (!fallbackPreviewUrl) fallbackPreviewUrl = candidate.url
       }
     } catch {}
   }
 
   for (const base of API_CANDIDATES()) {
     for (const level of URL_FETCH_LEVELS) {
-      try {
-        const v1Path = isUnmBase(base) ? '/api/song/enhance/player/url/v1' : '/song/url/v1'
-        const v1Query: Record<string, string | number> = {
-          id: String(id),
-          level,
-          encodeType: 'flac'
-        }
-        if (isUnmBase(base)) {
-          v1Query.ids = `["${String(id)}"]`
-        }
-        const rawV1 = await requestJson<{ data?: UrlPayloadItem[] }>(buildUrl(base, v1Path, v1Query))
-        const urlV1 = pickBestUrl(rawV1?.data)
-        if (urlV1) {
-          musicUrlCache.set(cacheKey, { url: urlV1, expiresAt: Date.now() + URL_CACHE_TTL })
-          return urlV1
-        }
-      } catch {}
+      const queries = isUnmBase(base)
+        ? buildUnmV1Queries(level)
+        : ([{ id: String(id), level, encodeType: 'flac' }] as Array<Record<string, string | number>>)
+      const path = isUnmBase(base) ? '/api/song/enhance/player/url/v1' : '/song/url/v1'
+      for (const query of queries) {
+        try {
+          const rawV1 = await requestJson<{ data?: UrlPayloadItem[] }>(buildUrl(base, path, query))
+          const candidate = pickBestUrlCandidate(rawV1?.data, expectedDurationMs)
+          if (candidate?.url) {
+            if (!candidate.previewLikely) {
+              musicUrlCache.set(cacheKey, { url: candidate.url, expiresAt: Date.now() + URL_CACHE_TTL })
+              return candidate.url
+            }
+            if (!fallbackPreviewUrl) fallbackPreviewUrl = candidate.url
+            break
+          }
+        } catch {}
+      }
     }
 
     for (const level of URL_FETCH_LEVELS) {
@@ -561,10 +849,13 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
         const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
           buildUrl(base, '/song/url', { id: String(id), br: 320000, level })
         )
-        const url = pickBestUrl(raw?.data)
-        if (url) {
-          musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
-          return url
+        const candidate = pickBestUrlCandidate(raw?.data, expectedDurationMs)
+        if (candidate?.url) {
+          if (!candidate.previewLikely) {
+            musicUrlCache.set(cacheKey, { url: candidate.url, expiresAt: Date.now() + URL_CACHE_TTL })
+            return candidate.url
+          }
+          if (!fallbackPreviewUrl) fallbackPreviewUrl = candidate.url
         }
       } catch {}
     }
@@ -573,32 +864,24 @@ export const getMusicUrl = async (id: number | string): Promise<string> => {
       const raw = await requestJson<{ data?: UrlPayloadItem[] }>(
         buildUrl(base, '/weapi/song/enhance/player/url/v1', { id: String(id), level: 'standard', br: 320000 })
       )
-      const url = pickBestUrl(raw?.data)
-      if (url) {
-        musicUrlCache.set(cacheKey, { url, expiresAt: Date.now() + URL_CACHE_TTL })
-        return url
+      const candidate = pickBestUrlCandidate(raw?.data, expectedDurationMs)
+      if (candidate?.url) {
+        if (!candidate.previewLikely) {
+          musicUrlCache.set(cacheKey, { url: candidate.url, expiresAt: Date.now() + URL_CACHE_TTL })
+          return candidate.url
+        }
+        if (!fallbackPreviewUrl) fallbackPreviewUrl = candidate.url
       }
     } catch {
       continue
     }
   }
 
-  for (const parser of PARSER_APIS) {
-    try {
-      const parserUrl = parser(String(id))
-      if (!parserUrl) continue
-      if (parserUrl.includes('meting')) {
-        return normalizeMediaUrl(parserUrl)
-      } else if (/^https?:\/\//i.test(parserUrl)) {
-        return normalizeMediaUrl(parserUrl)
-      }
-    } catch {
-      continue
-    }
+  if (fallbackPreviewUrl) {
+    musicUrlCache.set(cacheKey, { url: fallbackPreviewUrl, expiresAt: Date.now() + URL_CACHE_TTL })
+    return fallbackPreviewUrl
   }
-
-  const target = demoSongs.find((item) => item.id === id)
-  return target?.playMusicUrl ?? ''
+  return ''
 }
 
 export const getLyric = async (id: number | string): Promise<ILyric> => {
@@ -654,7 +937,18 @@ export const getLyric = async (id: number | string): Promise<ILyric> => {
   )
 }
 
-export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> => {
+export const resolvePlayableUrls = async (song: SongResult, forceRefresh = false): Promise<string[]> => {
+  const resolveCacheKey = `${String(song.id)}::${song.name}::${song.ar?.[0]?.name || ''}`.toLowerCase()
+  if (forceRefresh) {
+    resolveUrlCache.delete(resolveCacheKey)
+    musicUrlCache.delete(String(song.id))
+  }
+  const cached = resolveUrlCache.get(resolveCacheKey)
+  if (!forceRefresh && cached && cached.expiresAt > Date.now() && cached.urls.length > 0) {
+    const rankedCached = rankCandidates(cached.urls).slice(0, MAX_PLAYABLE_CANDIDATES)
+    if (rankedCached.length > 0) return rankedCached
+  }
+
   const candidates: string[] = []
   const pushCandidate = (url?: string) => {
     if (candidates.length >= MAX_PLAYABLE_CANDIDATES) return
@@ -665,41 +959,22 @@ export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> =
     }
   }
 
-  pushCandidate(song.playMusicUrl)
-  const keyword = `${song.name} ${song.ar?.[0]?.name || ''}`.trim()
-
   try {
-    const freshUrl = await withTimeout(getMusicUrl(song.id), 2200)
+    const customApiUrl = await withTimeout(resolveUrlFromCustomApi(song.id), 1800)
+    pushCandidate(customApiUrl)
+  } catch {}
+  pushCandidate(song.playMusicUrl)
+  try {
+    const freshUrl = await withTimeout(getMusicUrl(song.id, song.dt || 0), 2200)
     pushCandidate(freshUrl)
   } catch {}
 
-  try {
-    const fallbackSongs = await withTimeout(searchFromMeting(keyword), 2500)
-    const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
-    pushCandidate(exact?.playMusicUrl)
-    fallbackSongs.slice(0, 2).forEach((item) => pushCandidate(item.playMusicUrl))
-  } catch {}
-
-  if (candidates.length >= 3) {
-    return candidates
+  if (candidates.length < 2) {
+    try {
+      const metingUrl = await withTimeout(resolveUrlFromMetingFallback(song), 1800)
+      pushCandidate(metingUrl)
+    } catch {}
   }
-
-  try {
-    const backupTasks = ['tencent', 'kuwo', 'kugou', 'migu'].map((server) =>
-      withTimeout(searchFromMeting(keyword, server as MetingServer), 2200)
-    )
-    const settled = await Promise.allSettled(backupTasks)
-    for (const item of settled) {
-      if (item.status !== 'fulfilled') continue
-      const fallbackSongs = item.value
-      const exact = fallbackSongs.find((item) => item.name.toLowerCase() === song.name.toLowerCase())
-      pushCandidate(exact?.playMusicUrl)
-      fallbackSongs.slice(0, 1).forEach((item) => pushCandidate(item.playMusicUrl))
-      if (candidates.length >= MAX_PLAYABLE_CANDIDATES) {
-        break
-      }
-    }
-  } catch {}
 
   for (const url of EMERGENCY_PLAYBACK_URLS) {
     pushCandidate(url)
@@ -708,7 +983,14 @@ export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> =
     }
   }
 
-  return candidates
+  const ranked = rankCandidates(candidates).slice(0, MAX_PLAYABLE_CANDIDATES)
+  if (ranked.length > 0) {
+    resolveUrlCache.set(resolveCacheKey, {
+      urls: ranked,
+      expiresAt: Date.now() + RESOLVE_CACHE_TTL
+    })
+  }
+  return ranked
 }
 
 export const pingMusicApi = async (base: string) => {

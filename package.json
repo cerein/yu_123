@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:stable": "npm run dev:unm",
     "dev:unm": "concurrently \"npm:unm\" \"npm:dev\"",
-    "unm": "npx @unblockneteasemusic/server -p 3100 -o kugou kuwo bilibili",
+    "unm": "node scripts/run-unm.mjs",
     "build": "vue-tsc && vite build",
     "preview": "vite preview"
   },

@@ -41,6 +41,7 @@
             <button class="mode-btn" @click="togglePlayMode">{{ playModeLabel }}</button>
             <button class="mode-btn lyric-flag">歌词跟随·三行</button>
             <button class="mode-btn" @click="togglePlaybackRate">{{ playbackRateLabel }}</button>
+            <button class="mode-btn" :disabled="!currentSong" @click="reparseCurrentSong">重解析</button>
           </div>
           <div class="mini-search-wrap">
             <div class="search-row">
@@ -76,7 +77,14 @@
               </span>
             </p>
           </div>
-          <audio ref="audioPlayer" @timeupdate="updateTime" @ended="handleEnded" @loadedmetadata="handleLoadedMeta"></audio>
+          <audio
+            ref="audioPlayer"
+            @timeupdate="updateTime"
+            @ended="handleEnded"
+            @loadedmetadata="handleLoadedMeta"
+            @stalled="handleStalled"
+            @waiting="handleWaiting"
+          ></audio>
         </section>
         <section class="card">
           <h3 class="card-title">快速入口</h3>
@@ -209,7 +217,9 @@ import {
   getApiBase,
   getLyric,
   getSongDuration,
+  invalidateSongSourceCache,
   pingMusicApi,
+  reportPlaybackResult,
   resolvePlayableUrls,
   searchMusic,
   setApiBase
@@ -250,6 +260,7 @@ const userPlayIntent = ref(false)
 const lastActionAt = ref(0)
 const lastProgressSaveAt = ref(0)
 const playSessionId = ref(0)
+const lastRecoverAt = ref(0)
 const isSearching = ref(false)
 const searchError = ref('')
 const selectedApiBase = ref('')
@@ -551,16 +562,18 @@ const waitForMetadata = (player: HTMLAudioElement, timeoutMs = 2000) =>
 
 const isLikelyTrialSource = (song: SongResult, sourceDurationSec: number, currentSrc: string) => {
   if (String(song.id).startsWith('local-')) return false
-  if (/jd-musicrep-ts|jymusic|404/i.test(currentSrc)) return true
+  if (/jymusic|404/i.test(currentSrc)) return true
   if (!Number.isFinite(sourceDurationSec) || sourceDurationSec <= 0) return false
-  if (sourceDurationSec >= 29 && sourceDurationSec <= 31) return true
   const expectedSec = (song.dt || 0) / 1000
-  if (expectedSec <= 60) {
-    return sourceDurationSec <= 35
-  }
-  if (sourceDurationSec <= 31 && expectedSec >= 90) return true
-  if (sourceDurationSec < expectedSec * 0.55 && sourceDurationSec <= 45) return true
+  if (expectedSec > 120 && sourceDurationSec < Math.min(45, expectedSec * 0.55)) return true
+  if (expectedSec > 0 && sourceDurationSec > expectedSec * 1.8) return true
   return false
+}
+
+const canUsePreviewFallback = (song: SongResult) => {
+  const expectedSec = (song.dt || 0) / 1000
+  if (expectedSec <= 0) return true
+  return expectedSec <= 90
 }
 
 const triggerFileInput = () => {
@@ -585,11 +598,12 @@ const handleFiles = (event: Event) => {
   showTab.value = 'all'
 }
 
-const playSong = async (song: SongResult) => {
+const playSong = async (song: SongResult, options?: { forceRefresh?: boolean }) => {
   const player = audioPlayer.value
   if (!player) return
+  searchError.value = ''
 
-  if (currentSong.value?.id === song.id) {
+  if (currentSong.value?.id === song.id && !options?.forceRefresh) {
     togglePlay()
     return
   }
@@ -614,7 +628,7 @@ const playSong = async (song: SongResult) => {
 
   try {
     const currentSession = ++playSessionId.value
-    const urls = await resolvePlayableUrls(song)
+    const urls = await resolvePlayableUrls(song, Boolean(options?.forceRefresh))
     if (urls.length === 0) {
       throw new Error('no playable url')
     }
@@ -636,6 +650,7 @@ const playSong = async (song: SongResult) => {
         const sourceDuration = Number.isFinite(player.duration) ? player.duration : 0
         const resolvedSrc = player.currentSrc || url
         if (isLikelyTrialSource(song, sourceDuration, resolvedSrc)) {
+          reportPlaybackResult(url, false)
           if (!previewFallbackUrl) {
             previewFallbackUrl = url
           }
@@ -662,6 +677,7 @@ const playSong = async (song: SongResult) => {
         }
 
         currentSong.value = { ...song, playMusicUrl: url }
+        reportPlaybackResult(url, true)
         if (Number.isFinite(player.duration) && player.duration > 0) {
           duration.value = player.duration
         } else if (song.dt && song.dt > 0) {
@@ -677,6 +693,7 @@ const playSong = async (song: SongResult) => {
         played = true
         break
       } catch (error) {
+        reportPlaybackResult(url, false)
         if (isAbortPlayError(error)) {
           return
         }
@@ -687,7 +704,7 @@ const playSong = async (song: SongResult) => {
       }
     }
 
-    if (!played && previewFallbackUrl) {
+    if (!played && previewFallbackUrl && canUsePreviewFallback(song)) {
       if (signal?.aborted) return
       player.pause()
       player.src = previewFallbackUrl
@@ -701,6 +718,7 @@ const playSong = async (song: SongResult) => {
       }
       await player.play()
       currentSong.value = { ...song, playMusicUrl: previewFallbackUrl }
+      reportPlaybackResult(previewFallbackUrl, true)
       if (Number.isFinite(player.duration) && player.duration > 0) {
         duration.value = player.duration
       } else if (song.dt && song.dt > 0) {
@@ -738,7 +756,7 @@ const playSong = async (song: SongResult) => {
       return
     }
     playbackRequestManager.failRequest(requestId)
-    searchError.value = '播放失败：该歌曲可能无可用音源，已尝试主接口与备源'
+    searchError.value = '播放失败：该歌曲可能无可用音源，已尝试主接口、备源与第三方兜底，可点“重解析”或切换音源'
   }
 }
 
@@ -810,6 +828,30 @@ const prevSong = async () => {
 
 const handleEnded = async () => {
   await nextSong()
+}
+
+const reparseCurrentSong = async () => {
+  if (!currentSong.value) return
+  invalidateSongSourceCache(currentSong.value)
+  await playSong(currentSong.value, { forceRefresh: true })
+}
+
+const tryAutoRecover = async () => {
+  if (!currentSong.value || !isPlaying.value || !userPlayIntent.value) return
+  const now = Date.now()
+  if (now - lastRecoverAt.value < 8000) return
+  lastRecoverAt.value = now
+  invalidateSongSourceCache(currentSong.value)
+  searchError.value = '检测到播放卡顿，正在自动重解析音源'
+  await playSong(currentSong.value, { forceRefresh: true })
+}
+
+const handleStalled = () => {
+  void tryAutoRecover()
+}
+
+const handleWaiting = () => {
+  void tryAutoRecover()
 }
 
 const handleLoadedMeta = () => {

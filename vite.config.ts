@@ -1,9 +1,9 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath } from 'node:url'
 import http from 'node:http'
 
-const unmProxyPlugin = () => ({
+const unmProxyPlugin = (unmPort: number) => ({
   name: 'unm-proxy',
   configureServer(server: any) {
     server.middlewares.use((req: any, res: any, next: any) => {
@@ -21,7 +21,7 @@ const unmProxyPlugin = () => ({
         const proxyReq = http.request(
           {
             host: '127.0.0.1',
-            port: 3100,
+            port: unmPort,
             method: req.method,
             path: absoluteUrl,
             headers: {
@@ -49,8 +49,11 @@ const unmProxyPlugin = () => ({
   }
 })
 
-export default defineConfig({
-  plugins: [vue(), unmProxyPlugin()],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const unmPort = Number(env.VITE_UNBLOCK_PORT || 3100)
+  return {
+  plugins: [vue(), unmProxyPlugin(unmPort)],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
@@ -62,7 +65,7 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3100',
+        target: `http://127.0.0.1:${unmPort}`,
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/api/, '')
@@ -91,4 +94,5 @@ export default defineConfig({
       }
     }
   }
+}
 })
