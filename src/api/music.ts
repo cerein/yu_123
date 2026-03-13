@@ -79,10 +79,25 @@ const canUseLocalUnm = () => {
   return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 }
 
+const parseUnmBaseFromAnyUrl = (raw: string) => {
+  const value = raw.trim()
+  if (!value) return ''
+  if (value.startsWith('/unm-api')) return '/unm-api'
+  const match = value.match(/^https?:\/\/[^/]+\/unm-api(?:\/api\/.*)?$/i)
+  if (!match) return ''
+  try {
+    const parsed = new URL(value)
+    return `${parsed.origin}/unm-api`
+  } catch {
+    return ''
+  }
+}
+
 const normalizeApiBase = (base: string) => {
   const trimmed = base.trim()
   if (!trimmed) return ''
-  if (trimmed.includes('/unm-api')) return '/unm-api'
+  const unmBase = parseUnmBaseFromAnyUrl(trimmed)
+  if (unmBase) return unmBase
   return trimmed.replace(/\/+$/, '')
 }
 
@@ -197,7 +212,14 @@ const withTimeout = <T>(promise: Promise<T>, timeoutMs: number) =>
     )
   })
 
-const isUnmBase = (base: string) => normalizeApiBase(base) === '/unm-api'
+const isUnmBase = (base: string) => normalizeApiBase(base).endsWith('/unm-api')
+
+const getPreferredUnmBase = () => {
+  const saved = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
+  if (isUnmBase(saved)) return saved
+  if (canUseLocalUnm()) return '/unm-api'
+  return ''
+}
 
 type RawSong = {
   id: number | string
@@ -242,8 +264,9 @@ const normalizeMediaUrl = (url?: string | null) => {
   if (trimmed.startsWith('https://')) {
     try {
       const parsed = new URL(trimmed)
-      if (parsed.hostname === 'music.163.com' && parsed.pathname.startsWith('/package/') && canUseLocalUnm()) {
-        return `/unm-api${parsed.pathname}${parsed.search}`
+      if (parsed.hostname === 'music.163.com' && parsed.pathname.startsWith('/package/')) {
+        const unmBase = getPreferredUnmBase()
+        if (unmBase) return `${unmBase}${parsed.pathname}${parsed.search}`
       }
       if (parsed.hostname.endsWith('.music.126.net')) {
         const tail = `${parsed.pathname.replace(/^\/+/, '')}${parsed.search}`
