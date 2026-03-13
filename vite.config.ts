@@ -73,7 +73,22 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     rollupOptions: {
-      external: [/AlgerMusicPlayer/] // 排除AlgerMusicPlayer目录
+      input: {
+        index: fileURLToPath(new URL('./index.html', import.meta.url)),
+        app: fileURLToPath(new URL('./src/main.ts', import.meta.url))
+      },
+      external: [/AlgerMusicPlayer/],
+      output: {
+        entryFileNames: (chunkInfo) => (chunkInfo.name === 'app' ? 'assets/app.js' : 'assets/bootstrap.js'),
+        chunkFileNames: 'assets/chunk-[name].js',
+        assetFileNames: (assetInfo) => {
+          const name = assetInfo.name || ''
+          if (name.endsWith('.css')) {
+            return 'assets/app.css'
+          }
+          return 'assets/[name][extname]'
+        }
+      }
     }
   }
 })

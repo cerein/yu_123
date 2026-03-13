@@ -8,6 +8,18 @@
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module">
+      const isGithubPages = window.location.hostname.endsWith('.github.io')
+      if (isGithubPages) {
+        const css = document.createElement('link')
+        css.rel = 'stylesheet'
+        css.href = '/yu_123/assets/app.css'
+        document.head.appendChild(css)
+      }
+      const script = document.createElement('script')
+      script.type = 'module'
+      script.src = isGithubPages ? '/yu_123/assets/app.js' : '/src/main.ts'
+      document.body.appendChild(script)
+    </script>
   </body>
 </html>
