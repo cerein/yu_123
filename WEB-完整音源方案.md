@@ -66,7 +66,30 @@
 远程 UNM 容器示例：
 
 - [Dockerfile.unm](file:///d:/blog/ops/Dockerfile.unm)
+- [render.yaml](file:///d:/blog/render.yaml)
 
 流代理 Worker 示例代码：
 
 - [stream-proxy-worker.js](file:///d:/blog/ops/stream-proxy-worker.js)
+- [wrangler.toml](file:///d:/blog/wrangler.toml)
+
+自动发布 Worker（可选）：
+
+- [deploy-stream-proxy.yml](file:///d:/blog/.github/workflows/deploy-stream-proxy.yml)
+
+最少人工操作：
+
+1. Render 新建 Blueprint，选择本仓库，自动读取 `render.yaml`
+2. Cloudflare Worker 使用本仓库 `wrangler.toml` + `ops/stream-proxy-worker.js` 发布
+3. 在 GitHub 仓库 Variables 填：
+   - `VITE_REMOTE_UNM_BASE`
+   - `VITE_STREAM_PROXY_BASE`
+4. 在 GitHub 仓库 Secrets 填（若启用 Worker 自动发布）：
+   - `CLOUDFLARE_API_TOKEN`
+   - `CLOUDFLARE_ACCOUNT_ID`
+
+可选自动化（本机 PowerShell 一次写入 Variables 并触发 Pages 部署）：
+
+- [setup-github-pages-vars.ps1](file:///d:/blog/ops/setup-github-pages-vars.ps1)
+- 运行示例：
+  - `powershell -ExecutionPolicy Bypass -File ops/setup-github-pages-vars.ps1 -GithubToken "你的PAT" -RemoteUnmBase "https://your-unm.example.com/unm-api" -StreamProxyBase "https://your-stream-proxy.workers.dev"`
