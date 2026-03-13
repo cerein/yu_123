@@ -213,6 +213,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import {
   getApiBase,
   getLyric,
+  getSongDuration,
   pingMusicApi,
   pingPublicBackup,
   resolvePlayableUrls,
@@ -567,6 +568,15 @@ const playSong = async (song: SongResult) => {
   if (currentSong.value?.id === song.id) {
     togglePlay()
     return
+  }
+
+  // Optimize: Fetch accurate duration if missing (often 0 in search results)
+  if (!song.dt || song.dt === 0) {
+    getSongDuration(song.id).then((dt) => {
+      if (dt && dt > 0) {
+        song.dt = dt
+      }
+    })
   }
 
   const requestId = playbackRequestManager.createRequest(song)
