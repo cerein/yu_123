@@ -52,19 +52,13 @@
               >
               <button class="search-btn" @click="search">搜索并选择</button>
             </div>
-            <div class="api-row">
-              <input
-                v-model.trim="apiBaseInput"
-                class="search-input"
-                placeholder="音乐 API 地址，例如 /unm-api"
-              >
-              <button class="search-btn" @click="saveApiBase">保存</button>
-              <button class="search-btn ghost" :disabled="apiTesting" @click="testApiBase">
-                {{ apiTesting ? '检测中' : '检测API' }}
-              </button>
-            </div>
+            <select v-model="selectedApiBase" class="search-input api-select">
+              <option v-for="base in availableApiBases" :key="base" :value="base">
+                {{ base }}
+              </option>
+            </select>
             <p v-if="isSearching" class="state-tip">搜索中...</p>
-            <p v-if="apiTestMsg" class="state-tip" :class="{ error: apiTestMsg.includes('失败') }">{{ apiTestMsg }}</p>
+            <p v-if="apiTestMsg" class="state-tip">{{ apiTestMsg }}</p>
             <p v-else-if="searchError" class="state-tip error">{{ searchError }}</p>
           </div>
           <div class="mini-lyric">
@@ -211,11 +205,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import {
+  API_PRESET_BASES,
   getApiBase,
   getLyric,
   getSongDuration,
   pingMusicApi,
-  pingPublicBackup,
   resolvePlayableUrls,
   searchMusic,
   setApiBase
@@ -258,8 +252,8 @@ const lastProgressSaveAt = ref(0)
 const playSessionId = ref(0)
 const isSearching = ref(false)
 const searchError = ref('')
-const apiBaseInput = ref('')
-const apiTesting = ref(false)
+const selectedApiBase = ref('')
+const availableApiBases = ref<string[]>([])
 const apiTestMsg = ref('')
 const currentLyricProgress = ref(0)
 const showSearchPopup = ref(false)
@@ -435,33 +429,23 @@ const chooseSearchSong = async (song: SongResult) => {
   await playSong(song)
 }
 
-const saveApiBase = () => {
-  setApiBase(apiBaseInput.value)
-  apiTestMsg.value = `已保存 API：${getApiBase()}`
-}
-
-const testApiBase = async () => {
-  apiTesting.value = true
-  apiTestMsg.value = ''
-  try {
-    const ok = await pingMusicApi(apiBaseInput.value || getApiBase())
-    if (ok) {
-      apiTestMsg.value = 'API 检测成功，可以搜索和播放'
-      setApiBase(apiBaseInput.value || getApiBase())
-      await getSearchResult(searchQuery.value || '周杰伦')
-      return
-    }
-    const backupOk = await pingPublicBackup()
-    apiTestMsg.value = backupOk
-      ? '你的 API 不可用，已启用公共备源，可正常搜索试听'
-      : 'API 检测失败，请更换地址'
-  } catch {
-    const backupOk = await pingPublicBackup()
-    apiTestMsg.value = backupOk
-      ? 'API 不可用，已切换公共备源，可正常搜索试听'
-      : 'API 检测失败，请确认服务已启动且支持 CORS'
-  } finally {
-    apiTesting.value = false
+const loadAvailableApiBases = async () => {
+  const current = getApiBase()
+  const seed = Array.from(new Set([current, ...API_PRESET_BASES].map((item) => item.trim()).filter(Boolean)))
+  const okList: string[] = []
+  for (const base of seed) {
+    try {
+      const ok = await pingMusicApi(base)
+      if (ok) {
+        okList.push(base)
+      }
+    } catch {}
+  }
+  availableApiBases.value = okList.length > 0 ? okList : seed
+  selectedApiBase.value = availableApiBases.value.includes(current) ? current : availableApiBases.value[0] || current
+  if (selectedApiBase.value) {
+    setApiBase(selectedApiBase.value)
+    apiTestMsg.value = `当前 API：${selectedApiBase.value}`
   }
 }
 
@@ -935,7 +919,7 @@ watch(playbackRate, (rate) => {
 
 onMounted(async () => {
   bootstrapLocalState()
-  apiBaseInput.value = getApiBase()
+  await loadAvailableApiBases()
   await getSearchResult('周杰伦')
   if (audioPlayer.value) {
     audioPlayer.value.volume = volume.value
@@ -954,6 +938,16 @@ onMounted(async () => {
     navigator.mediaSession.setActionHandler('nexttrack', () => {
       void nextSong()
     })
+  }
+})
+
+watch(selectedApiBase, async (value) => {
+  const base = value.trim()
+  if (!base) return
+  setApiBase(base)
+  apiTestMsg.value = `当前 API：${base}`
+  if (searchQuery.value.trim()) {
+    await getSearchResult(searchQuery.value)
   }
 })
 </script>
@@ -1276,13 +1270,6 @@ onMounted(async () => {
   gap: 10px;
 }
 
-.api-row {
-  margin-top: 10px;
-  display: grid;
-  grid-template-columns: 1fr 92px 92px;
-  gap: 10px;
-}
-
 .search-input,
 .form-input,
 .form-textarea {
@@ -1296,6 +1283,10 @@ onMounted(async () => {
 .search-input,
 .form-input {
   height: 40px;
+}
+
+.api-select {
+  margin-top: 10px;
 }
 
 .form-grid {
@@ -1608,10 +1599,6 @@ onMounted(async () => {
 
   .mini-player {
     position: static;
-  }
-
-  .api-row {
-    grid-template-columns: 1fr;
   }
 
   .search-row {
