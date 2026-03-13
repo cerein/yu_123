@@ -185,6 +185,19 @@ const normalizeCoverUrl = (url?: string) => {
   return trimmed
 }
 
+const normalizeMediaUrl = (url?: string | null) => {
+  if (!url) return ''
+  const trimmed = url.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('//')) {
+    return `https:${trimmed}`
+  }
+  if (trimmed.startsWith('http://')) {
+    return `https://${trimmed.slice(7)}`
+  }
+  return trimmed
+}
+
 const mapSongs = (items: RawSong[]): SongResult[] =>
   items.map((song) => {
     const cover =
@@ -263,7 +276,7 @@ const pickBestUrl = (items?: UrlPayloadItem[]) => {
     if (byBitrate !== 0) return byBitrate
     return (b.time || 0) - (a.time || 0)
   })
-  return sorted[0].url
+  return normalizeMediaUrl(sorted[0].url)
 }
 
 type MetingServer = 'netease' | 'tencent' | 'kuwo' | 'kugou' | 'migu'
@@ -313,7 +326,7 @@ const searchFromMeting = async (keyword: string, server: MetingServer = 'netease
           name: album,
           picUrl: cover
         },
-        playMusicUrl: item.url || undefined,
+        playMusicUrl: normalizeMediaUrl(item.url) || undefined,
         dt: item.time
       } satisfies SongResult
     })
@@ -340,7 +353,7 @@ const searchFromItunes = async (keyword: string) => {
           name: item.collectionName || '未知专辑',
           picUrl: cover
         },
-        playMusicUrl: item.previewUrl || undefined,
+        playMusicUrl: normalizeMediaUrl(item.previewUrl) || undefined,
         dt: item.trackTimeMillis
       } satisfies SongResult
     })
@@ -599,9 +612,10 @@ export const getLyric = async (id: number | string): Promise<ILyric> => {
 export const resolvePlayableUrls = async (song: SongResult): Promise<string[]> => {
   const candidates: string[] = []
   const pushCandidate = (url?: string) => {
-    if (!url) return
-    if (!candidates.includes(url)) {
-      candidates.push(url)
+    const normalized = normalizeMediaUrl(url)
+    if (!normalized) return
+    if (!candidates.includes(normalized)) {
+      candidates.push(normalized)
     }
   }
 

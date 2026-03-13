@@ -637,6 +637,7 @@ const playSong = async (song: SongResult) => {
     if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
 
     let played = false
+    let previewFallbackUrl = ''
     for (const url of urls) {
       if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
       try {
@@ -649,6 +650,9 @@ const playSong = async (song: SongResult) => {
         const sourceDuration = Number.isFinite(player.duration) ? player.duration : 0
         const resolvedSrc = player.currentSrc || url
         if (isLikelyTrialSource(song, sourceDuration, resolvedSrc)) {
+          if (!previewFallbackUrl) {
+            previewFallbackUrl = url
+          }
           player.pause()
           player.removeAttribute('src')
           player.load()
@@ -689,6 +693,28 @@ const playSong = async (song: SongResult) => {
         }
         continue
       }
+    }
+
+    if (!played && previewFallbackUrl) {
+      if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+      player.pause()
+      player.src = previewFallbackUrl
+      player.load()
+      player.playbackRate = playbackRate.value
+      await waitForPlayable(player, 7000)
+      await waitForMetadata(player, 1800)
+      const progress = safeReadProgress(String(song.id))
+      if (progress > 0) {
+        player.currentTime = progress
+      }
+      await player.play()
+      currentSong.value = { ...song, playMusicUrl: previewFallbackUrl }
+      if (Number.isFinite(player.duration) && player.duration > 0) {
+        duration.value = player.duration
+      } else if (song.dt && song.dt > 0) {
+        duration.value = song.dt / 1000
+      }
+      played = true
     }
 
     if (!played) {
