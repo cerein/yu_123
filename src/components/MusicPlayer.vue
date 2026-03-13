@@ -39,8 +39,48 @@
           </div>
           <div class="mode-row">
             <button class="mode-btn" @click="togglePlayMode">{{ playModeLabel }}</button>
-            <button class="mode-btn" @click="showLyrics = !showLyrics">{{ showLyrics ? '歌曲列表' : '歌词面板' }}</button>
+            <button class="mode-btn lyric-flag">歌词跟随·三行</button>
             <button class="mode-btn" @click="togglePlaybackRate">{{ playbackRateLabel }}</button>
+          </div>
+          <div class="mini-search-wrap">
+            <div class="search-row">
+              <input
+                v-model.trim="searchQuery"
+                class="search-input"
+                placeholder="搜索歌曲 / 歌手 / 专辑"
+                @keyup.enter="search"
+              >
+              <button class="search-btn" @click="search">搜索并选择</button>
+            </div>
+            <div class="api-row">
+              <input
+                v-model.trim="apiBaseInput"
+                class="search-input"
+                placeholder="音乐 API 地址，例如 /unm-api"
+              >
+              <button class="search-btn" @click="saveApiBase">保存</button>
+              <button class="search-btn ghost" :disabled="apiTesting" @click="testApiBase">
+                {{ apiTesting ? '检测中' : '检测API' }}
+              </button>
+            </div>
+            <p v-if="isSearching" class="state-tip">搜索中...</p>
+            <p v-if="apiTestMsg" class="state-tip" :class="{ error: apiTestMsg.includes('失败') }">{{ apiTestMsg }}</p>
+            <p v-else-if="searchError" class="state-tip error">{{ searchError }}</p>
+          </div>
+          <div class="mini-lyric">
+            <p
+              v-for="line in currentLyricWindow"
+              :key="line.key"
+              class="mini-lyric-line"
+              :class="line.kind"
+            >
+              <span
+                class="mini-lyric-text"
+                :style="line.kind === 'current' ? { '--line-progress': `${Math.round(currentLyricProgress * 100)}%` } : undefined"
+              >
+                {{ line.text }}
+              </span>
+            </p>
           </div>
           <audio ref="audioPlayer" @timeupdate="updateTime" @ended="handleEnded" @loadedmetadata="handleLoadedMeta"></audio>
         </section>
@@ -63,37 +103,24 @@
       </aside>
       <section class="main-panel">
         <article class="pink-card">
-          <div class="pink-head">个人简介</div>
+          <div class="pink-head with-heart">个人简介 <button class="edit-btn" @click="toggleEditContent">{{ isEditingContent ? '保存内容' : '编辑内容' }}</button></div>
           <div class="pink-body intro-row">
-            <p>
-              这是一个把个人主页和音乐播放器融合在一起的纯前端页面。播放器核心交互参考了 AlgerMusicPlayer，
-              保留了播放控制、列表管理、歌词同步、播放模式和本地歌单持久化。
-            </p>
+            <p v-if="!isEditingContent">{{ introText }}</p>
+            <textarea v-else v-model="introText" class="form-textarea content-editor"></textarea>
             <img class="intro-cover" :src="currentSong?.al.picUrl || 'https://picsum.photos/seed/card/280/170'" alt="cover">
           </div>
         </article>
         <article class="pink-card">
           <div class="pink-head with-heart">兴趣爱好 <span>❤</span></div>
           <div class="pink-body">
-            <p>
-              我喜欢在写代码和写作时听音乐，希望这个页面既有复古个人主页的观感，也有现代播放器的体验。
-              你可以直接搜索示例歌曲，或者导入本地音乐文件立刻播放。
-            </p>
+            <p v-if="!isEditingContent">{{ hobbyText }}</p>
+            <textarea v-else v-model="hobbyText" class="form-textarea content-editor"></textarea>
           </div>
         </article>
         <article class="pink-card">
           <div class="pink-head">音乐列表</div>
           <div class="pink-body">
-            <div class="search-row">
-              <input
-                v-model.trim="searchQuery"
-                class="search-input"
-                placeholder="搜索歌曲 / 歌手 / 专辑"
-                @keyup.enter="search"
-              >
-              <button class="search-btn" @click="search">搜索</button>
-            </div>
-            <div v-if="!showLyrics" class="list-wrap">
+            <div class="list-wrap">
               <div
                 v-for="song in visibleSongs"
                 :key="song.id"
@@ -110,29 +137,90 @@
               </div>
               <p v-if="visibleSongs.length === 0" class="empty-tip">当前分类没有歌曲</p>
             </div>
-            <div v-else class="lyric-wrap">
-              <p
-                v-for="(line, index) in lyrics?.lrcArray || []"
-                :key="`${line.text}-${index}`"
-                class="lyric-line"
-                :class="{ on: currentLyricIndex === index }"
-              >
-                {{ line.text }}
-                <span v-if="line.trText">{{ line.trText }}</span>
-              </p>
-              <p v-if="!lyrics || lyrics.lrcArray.length === 0" class="empty-tip">暂无歌词</p>
+          </div>
+        </article>
+        <article class="pink-card">
+          <div class="pink-head with-heart">我的留言 <span>💗</span></div>
+          <div class="pink-body">
+            <div class="form-grid">
+              <input class="form-input" placeholder="昵称">
+              <input class="form-input" placeholder="电子邮箱（选填）">
+              <textarea class="form-textarea" placeholder="留言内容"></textarea>
+              <button class="submit-btn">发送留言</button>
             </div>
+          </div>
+        </article>
+        <article class="pink-card">
+          <div class="pink-head with-heart">我的日志 <span>📝</span></div>
+          <div class="pink-body">
+            <p v-if="!isEditingContent" class="log-line">{{ logLine1 }}</p>
+            <p v-if="!isEditingContent" class="log-line">{{ logLine2 }}</p>
+            <template v-else>
+              <input v-model="logLine1" class="form-input content-editor-input">
+              <input v-model="logLine2" class="form-input content-editor-input">
+            </template>
           </div>
         </article>
       </section>
     </main>
+    <footer class="page-footer">
+      <div class="footer-links">
+        <a href="#">关于我</a>
+        <a href="#">我的音乐</a>
+        <a href="#">留言板</a>
+        <a href="#">GitHub</a>
+      </div>
+      <p>© 2026 我的个人主页 · Vue3 + TypeScript</p>
+    </footer>
+    <div v-if="showSearchPopup" class="search-popup-mask" @click.self="closeSearchPopup">
+      <div class="search-popup">
+        <div class="search-popup-head">
+          <div class="search-popup-title">
+            <h4>选择歌曲</h4>
+            <p>{{ searchQuery || '推荐歌曲' }} · {{ searchCandidates.length }} 首结果</p>
+          </div>
+          <button class="popup-close-btn" @click="closeSearchPopup">关闭</button>
+        </div>
+        <div class="search-popup-list">
+          <button
+            v-for="song in searchCandidates"
+            :key="`popup-${song.id}`"
+            class="search-popup-item"
+            @click="chooseSearchSong(song)"
+          >
+            <img class="song-cover" :src="song.al.picUrl" alt="cover">
+            <div class="song-meta">
+              <p class="song-name">{{ song.name }}</p>
+              <p class="song-sub">{{ song.ar.map((item) => item.name).join('/') }} · {{ song.al.name }}</p>
+            </div>
+            <div class="popup-item-right">
+              <p class="song-time">{{ song.dt ? formatTime(song.dt / 1000) : '--:--' }}</p>
+              <span v-if="currentSong && String(currentSong.id) === String(song.id)" class="playing-badge">播放中</span>
+            </div>
+          </button>
+          <div v-if="searchCandidates.length === 0" class="popup-empty">
+            <p class="popup-empty-title">没有可选歌曲</p>
+            <p class="popup-empty-sub">试试更换关键词，或先检测 API 连通性</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { getLyric, getMusicUrl, searchMusic } from '../api/music'
+import {
+  getApiBase,
+  getLyric,
+  pingMusicApi,
+  pingPublicBackup,
+  resolvePlayableUrls,
+  searchMusic,
+  setApiBase
+} from '../api/music'
 import { playbackRequestManager } from '../services/playbackRequestManager'
+import { debounce } from '../utils/debounce'
 import type { ILyric, SongResult } from '../types/music'
 
 type PlayMode = 'loop' | 'single' | 'random'
@@ -145,6 +233,7 @@ const VOLUME_KEY = 'blog-music-volume'
 const RATE_KEY = 'blog-music-rate'
 const LAST_SONG_KEY = 'blog-music-last-song'
 const PROGRESS_KEY = 'blog-music-progress'
+const PAGE_COPY_KEY = 'blog-page-copy'
 
 const audioPlayer = ref<HTMLAudioElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -153,7 +242,6 @@ const songs = ref<SongResult[]>([])
 const currentSong = ref<SongResult | null>(null)
 const lyrics = ref<ILyric | null>(null)
 const currentLyricIndex = ref(0)
-const showLyrics = ref(false)
 const isPlaying = ref(false)
 const currentTime = ref(0)
 const duration = ref(0)
@@ -166,6 +254,20 @@ const historyIds = ref<string[]>([])
 const userPlayIntent = ref(false)
 const lastActionAt = ref(0)
 const lastProgressSaveAt = ref(0)
+const playSessionId = ref(0)
+const isSearching = ref(false)
+const searchError = ref('')
+const apiBaseInput = ref('')
+const apiTesting = ref(false)
+const apiTestMsg = ref('')
+const currentLyricProgress = ref(0)
+const showSearchPopup = ref(false)
+const searchCandidates = ref<SongResult[]>([])
+const isEditingContent = ref(false)
+const introText = ref('这是一个把个人主页和音乐播放器融合在一起的纯前端页面。播放器核心交互参考了 AlgerMusicPlayer，保留了播放控制、列表管理、歌词同步、播放模式和本地歌单持久化。')
+const hobbyText = ref('我喜欢在写代码和写作时听音乐，希望这个页面既有复古个人主页的观感，也有现代播放器的体验。你可以直接搜索示例歌曲，或者导入本地音乐文件立刻播放。')
+const logLine1 = ref('今天把播放器重构成更稳定的流式播放链路。')
+const logLine2 = ref('歌词滚动按换行触发，体验和 Alger 更一致。')
 
 const currentSongId = computed(() => (currentSong.value ? String(currentSong.value.id) : ''))
 const isCurrentFavorite = computed(() => favoriteIds.value.includes(currentSongId.value))
@@ -177,6 +279,26 @@ const playModeLabel = computed(() => {
 })
 
 const playbackRateLabel = computed(() => `${playbackRate.value.toFixed(1)}x`)
+
+const currentLyricWindow = computed(() => {
+  const lines = lyrics.value?.lrcArray || []
+  if (!lines.length) {
+    return [
+      { key: 'empty-prev', kind: 'prev', text: '' },
+      { key: 'empty-current', kind: 'current', text: '暂无歌词' },
+      { key: 'empty-next', kind: 'next', text: '' }
+    ]
+  }
+  const index = Math.max(0, Math.min(currentLyricIndex.value, lines.length - 1))
+  const prev = lines[index - 1]?.text || ''
+  const current = lines[index]?.text || ''
+  const next = lines[index + 1]?.text || ''
+  return [
+    { key: `prev-${index - 1}`, kind: 'prev', text: prev },
+    { key: `current-${index}`, kind: 'current', text: current },
+    { key: `next-${index + 1}`, kind: 'next', text: next }
+  ]
+})
 
 const visibleSongs = computed(() => {
   if (showTab.value === 'favorite') {
@@ -210,6 +332,42 @@ const bootstrapLocalState = () => {
   playMode.value = rawMode === 'single' || rawMode === 'random' || rawMode === 'loop' ? rawMode : 'loop'
   volume.value = rawVolume ? Number(rawVolume) : 0.7
   playbackRate.value = rawRate ? Number(rawRate) : 1
+  const rawCopy = localStorage.getItem(PAGE_COPY_KEY)
+  if (rawCopy) {
+    try {
+      const parsed = JSON.parse(rawCopy) as {
+        intro?: string
+        hobby?: string
+        log1?: string
+        log2?: string
+      }
+      if (parsed.intro) introText.value = parsed.intro
+      if (parsed.hobby) hobbyText.value = parsed.hobby
+      if (parsed.log1) logLine1.value = parsed.log1
+      if (parsed.log2) logLine2.value = parsed.log2
+    } catch {
+      localStorage.removeItem(PAGE_COPY_KEY)
+    }
+  }
+}
+
+const persistPageCopy = () => {
+  localStorage.setItem(
+    PAGE_COPY_KEY,
+    JSON.stringify({
+      intro: introText.value,
+      hobby: hobbyText.value,
+      log1: logLine1.value,
+      log2: logLine2.value
+    })
+  )
+}
+
+const toggleEditContent = () => {
+  if (isEditingContent.value) {
+    persistPageCopy()
+  }
+  isEditingContent.value = !isEditingContent.value
 }
 
 const markHistory = (songId: string) => {
@@ -218,8 +376,85 @@ const markHistory = (songId: string) => {
   persistHistory()
 }
 
+const getSearchResult = async (keyword: string) => {
+  isSearching.value = true
+  searchError.value = ''
+  try {
+    songs.value = await searchMusic(keyword)
+    if (songs.value.length === 0 && keyword.trim()) {
+      searchError.value = '没有搜索到歌曲，请换个关键词'
+    }
+  } catch {
+    searchError.value = '搜索失败，请检查网络或更换 API 地址'
+  } finally {
+    isSearching.value = false
+  }
+}
+
+const getPopupSearchResult = async (keyword: string) => {
+  isSearching.value = true
+  searchError.value = ''
+  try {
+    searchCandidates.value = await searchMusic(keyword)
+    showSearchPopup.value = true
+    if (searchCandidates.value.length === 0 && keyword.trim()) {
+      searchError.value = '没有搜索到歌曲，请换个关键词'
+    }
+  } catch {
+    searchError.value = '搜索失败，请检查网络或更换 API 地址'
+    searchCandidates.value = []
+    showSearchPopup.value = true
+  } finally {
+    isSearching.value = false
+  }
+}
+
 const search = async () => {
-  songs.value = await searchMusic(searchQuery.value)
+  await getPopupSearchResult(searchQuery.value)
+}
+
+const closeSearchPopup = () => {
+  showSearchPopup.value = false
+}
+
+const chooseSearchSong = async (song: SongResult) => {
+  closeSearchPopup()
+  const exists = songs.value.some((item) => String(item.id) === String(song.id))
+  if (!exists) {
+    songs.value = [song, ...songs.value]
+  }
+  showTab.value = 'all'
+  await playSong(song)
+}
+
+const saveApiBase = () => {
+  setApiBase(apiBaseInput.value)
+  apiTestMsg.value = `已保存 API：${getApiBase()}`
+}
+
+const testApiBase = async () => {
+  apiTesting.value = true
+  apiTestMsg.value = ''
+  try {
+    const ok = await pingMusicApi(apiBaseInput.value || getApiBase())
+    if (ok) {
+      apiTestMsg.value = 'API 检测成功，可以搜索和播放'
+      setApiBase(apiBaseInput.value || getApiBase())
+      await getSearchResult(searchQuery.value || '周杰伦')
+      return
+    }
+    const backupOk = await pingPublicBackup()
+    apiTestMsg.value = backupOk
+      ? '你的 API 不可用，已启用公共备源，可正常搜索试听'
+      : 'API 检测失败，请更换地址'
+  } catch {
+    const backupOk = await pingPublicBackup()
+    apiTestMsg.value = backupOk
+      ? 'API 不可用，已切换公共备源，可正常搜索试听'
+      : 'API 检测失败，请确认服务已启动且支持 CORS'
+  } finally {
+    apiTesting.value = false
+  }
 }
 
 const canTriggerAction = () => {
@@ -228,6 +463,73 @@ const canTriggerAction = () => {
   lastActionAt.value = now
   return true
 }
+
+const isAbortPlayError = (error: unknown) => {
+  if (error instanceof DOMException) {
+    return error.name === 'AbortError'
+  }
+  if (error && typeof error === 'object' && 'name' in error) {
+    return (error as { name?: string }).name === 'AbortError'
+  }
+  return false
+}
+
+const safeReadProgress = (songId: string) => {
+  const saved = localStorage.getItem(PROGRESS_KEY)
+  if (!saved) return 0
+  try {
+    const parsed = JSON.parse(saved) as { songId?: string; progress?: number }
+    if (parsed.songId === songId && Number.isFinite(parsed.progress) && (parsed.progress || 0) > 0) {
+      return parsed.progress || 0
+    }
+    return 0
+  } catch {
+    localStorage.removeItem(PROGRESS_KEY)
+    return 0
+  }
+}
+
+const LYRIC_TIME_OFFSET_MS = 220
+
+const getCurrentLineIndex = (playTimeMs: number, lrc: ILyric) => {
+  const list = lrc.lrcArray
+  if (!list || list.length === 0) return -1
+  const adjusted = playTimeMs + LYRIC_TIME_OFFSET_MS
+  for (let i = 0; i < list.length; i += 1) {
+    const current = list[i].startTime ?? 0
+    const next = list[i + 1]?.startTime
+    if (adjusted < current) {
+      return i === 0 ? 0 : i - 1
+    }
+    if (next === undefined || adjusted < next) {
+      return i
+    }
+  }
+  return list.length - 1
+}
+
+const waitForPlayable = (player: HTMLAudioElement, timeoutMs = 6000) =>
+  new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      player.removeEventListener('canplay', onCanPlay)
+      player.removeEventListener('error', onError)
+      window.clearTimeout(timer)
+    }
+    const onCanPlay = () => {
+      cleanup()
+      resolve()
+    }
+    const onError = () => {
+      cleanup()
+      reject(new Error('audio source failed'))
+    }
+    const timer = window.setTimeout(() => {
+      cleanup()
+      reject(new Error('audio load timeout'))
+    }, timeoutMs)
+    player.addEventListener('canplay', onCanPlay, { once: true })
+    player.addEventListener('error', onError, { once: true })
+  })
 
 const triggerFileInput = () => {
   fileInput.value?.click()
@@ -267,23 +569,54 @@ const playSong = async (song: SongResult) => {
   currentSong.value = song
   lyrics.value = null
   currentLyricIndex.value = 0
+  currentLyricProgress.value = 0
   userPlayIntent.value = true
 
   try {
-    const url = song.playMusicUrl || (await getMusicUrl(song.id))
+    const currentSession = ++playSessionId.value
+    const urls = await resolvePlayableUrls(song)
+    if (urls.length === 0) {
+      throw new Error('no playable url')
+    }
     if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
-    player.src = url
-    player.playbackRate = playbackRate.value
 
-    const saved = localStorage.getItem(PROGRESS_KEY)
-    if (saved) {
-      const { songId, progress } = JSON.parse(saved) as { songId: string; progress: number }
-      if (songId === String(song.id) && Number.isFinite(progress) && progress > 0) {
-        player.currentTime = progress
+    let played = false
+    for (const url of urls) {
+      if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
+      try {
+        player.pause()
+        player.src = url
+        player.load()
+        player.playbackRate = playbackRate.value
+        await waitForPlayable(player, 7000)
+        const progress = safeReadProgress(String(song.id))
+        if (progress > 0) {
+          player.currentTime = progress
+        }
+
+        try {
+          await player.play()
+        } catch (error) {
+          if (isAbortPlayError(error) || currentSession !== playSessionId.value) {
+            return
+          }
+          throw error
+        }
+
+        currentSong.value = { ...song, playMusicUrl: url }
+        played = true
+        break
+      } catch (error) {
+        if (isAbortPlayError(error)) {
+          return
+        }
+        continue
       }
     }
 
-    await player.play()
+    if (!played) {
+      throw new Error('all candidate urls failed')
+    }
     if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
     isPlaying.value = true
     markHistory(String(song.id))
@@ -302,8 +635,12 @@ const playSong = async (song: SongResult) => {
     if (signal?.aborted || !playbackRequestManager.isRequestValid(requestId)) return
     lyrics.value = lrc
     playbackRequestManager.completeRequest(requestId)
-  } catch {
+  } catch (error) {
+    if (isAbortPlayError(error)) {
+      return
+    }
     playbackRequestManager.failRequest(requestId)
+    searchError.value = '播放失败：该歌曲可能无可用音源，已尝试主接口与备源'
   }
 }
 
@@ -311,10 +648,19 @@ const togglePlay = async () => {
   const player = audioPlayer.value
   if (!player || !currentSong.value) return
   if (player.paused) {
-    await player.play()
+    const currentSession = ++playSessionId.value
+    try {
+      await player.play()
+    } catch (error) {
+      if (isAbortPlayError(error) || currentSession !== playSessionId.value) {
+        return
+      }
+      throw error
+    }
     isPlaying.value = true
     userPlayIntent.value = true
   } else {
+    playSessionId.value += 1
     player.pause()
     isPlaying.value = false
     userPlayIntent.value = false
@@ -386,16 +732,18 @@ const updateTime = () => {
     )
   }
   if (!lyrics.value) return
-  const matched = lyrics.value.lrcArray.findIndex((line, index) => {
-    const current = line.startTime ?? 0
-    const next = lyrics.value?.lrcArray[index + 1]?.startTime
-    if (next === undefined) {
-      return currentTime.value * 1000 >= current
-    }
-    return currentTime.value * 1000 >= current && currentTime.value * 1000 < next
-  })
-  if (matched >= 0) {
+  const matched = getCurrentLineIndex(currentTime.value * 1000, lyrics.value)
+  if (matched >= 0 && matched !== currentLyricIndex.value) {
     currentLyricIndex.value = matched
+  }
+  if (matched >= 0) {
+    const currentLine = lyrics.value.lrcArray[matched]
+    const nextStart = lyrics.value.lrcArray[matched + 1]?.startTime
+    const start = currentLine?.startTime ?? 0
+    const end = nextStart ?? start + Math.max(currentLine?.duration ?? 4000, 1000)
+    const total = Math.max(end - start, 1)
+    const ratio = (currentTime.value * 1000 - start) / total
+    currentLyricProgress.value = Math.min(1, Math.max(0, ratio))
   }
 }
 
@@ -455,9 +803,9 @@ watch(volume, (value) => {
   localStorage.setItem(VOLUME_KEY, String(value))
 })
 
-watch(showTab, () => {
-  showLyrics.value = false
-})
+watch(searchQuery, debounce(() => {
+  searchError.value = ''
+}, 300))
 
 watch(playMode, (mode) => {
   localStorage.setItem(PLAY_MODE_KEY, mode)
@@ -472,7 +820,8 @@ watch(playbackRate, (rate) => {
 
 onMounted(async () => {
   bootstrapLocalState()
-  await search()
+  apiBaseInput.value = getApiBase()
+  await getSearchResult('周杰伦')
   if (audioPlayer.value) {
     audioPlayer.value.volume = volume.value
     audioPlayer.value.playbackRate = playbackRate.value
@@ -497,74 +846,90 @@ onMounted(async () => {
 <style scoped>
 .page-shell {
   min-height: 100vh;
-  background: #ffffff;
-  color: #333;
+  background: radial-gradient(circle at 30% -10%, #2f3136 0%, #111216 44%, #0a0b0d 100%);
+  color: #f1f1f1;
 }
 
 .top-banner {
-  background: #dff6ff;
-  padding: 22px 18px 10px;
-  border-bottom: 1px solid #f3c3d5;
+  background: linear-gradient(180deg, #c8f5ff 0%, #dffbff 100%);
+  padding-top: 18px;
+  border-bottom: 1px solid #2d2f33;
 }
 
 .welcome-tag {
-  color: #b58500;
+  width: min(1220px, 96vw);
+  margin: 0 auto;
+  color: #b98d00;
+  font-size: clamp(26px, 4vw, 42px);
   font-weight: 700;
-  font-size: 34px;
-  letter-spacing: 1px;
 }
 
 .title {
+  width: min(1220px, 96vw);
+  margin: 6px auto 16px;
   text-align: center;
-  margin: 10px 0 16px;
-  font-size: 48px;
-  color: #fdfdfd;
-  text-shadow: 2px 2px 0 #7c95aa;
+  color: #fff;
+  font-size: clamp(32px, 5vw, 58px);
+  text-shadow: 2px 2px 0 #6f8797;
 }
 
 .nav-bar {
+  background: #1f2227;
+  border-top: 1px solid #353a40;
+  border-bottom: 1px solid #353a40;
   display: flex;
-  gap: 24px;
   justify-content: center;
-  font-size: 14px;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
 }
 
 .nav-item {
-  color: #666;
+  color: #c8cbd0;
   text-decoration: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
-.nav-item.active {
-  font-weight: 700;
+.nav-item.active,
+.nav-item:hover {
+  background: #2d3138;
+  color: #fff;
 }
 
 .content-layout {
-  width: min(1280px, 96vw);
-  margin: 18px auto 0;
+  width: min(1220px, 96vw);
+  margin: 14px auto 0;
   display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 16px;
+  grid-template-columns: 320px 1fr;
+  gap: 14px;
   align-items: start;
 }
 
-.left-panel {
+.left-panel,
+.main-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
+.card,
+.pink-card {
+  border: 1px solid #34373e;
+  border-radius: 10px;
+  background: #202328;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
 .card {
-  border: 1px solid #ffc5dc;
-  border-radius: 8px;
-  background: #fff;
   padding: 12px;
 }
 
 .card-title {
-  font-size: 15px;
-  margin-bottom: 8px;
-  color: #ff5da9;
-  font-weight: 700;
+  color: #ffc0df;
+  font-size: 14px;
+  margin-bottom: 10px;
 }
 
 .center {
@@ -572,21 +937,21 @@ onMounted(async () => {
 }
 
 .sub {
+  color: #b9bec8;
   font-size: 12px;
-  color: #666;
 }
 
 .timeline-row {
   display: flex;
   justify-content: space-between;
-  margin: 10px 0 6px;
+  color: #9ea5b0;
   font-size: 12px;
-  color: #9f9f9f;
+  margin: 10px 0 6px;
 }
 
 .pink-range {
   width: 100%;
-  accent-color: #ff76bb;
+  accent-color: #ff5fb0;
 }
 
 .player-actions {
@@ -597,18 +962,18 @@ onMounted(async () => {
 }
 
 .icon-btn {
-  border: 1px solid #ffd1e7;
-  border-radius: 999px;
   width: 34px;
   height: 34px;
-  background: #fff;
-  color: #ff5da9;
-  font-size: 16px;
+  border: 1px solid #494f5a;
+  border-radius: 999px;
+  background: #262a31;
+  color: #ff76bb;
 }
 
 .icon-btn.main {
-  background: #ff76bb;
+  background: #ff63b2;
   color: #fff;
+  border-color: transparent;
 }
 
 .volume-row {
@@ -616,6 +981,7 @@ onMounted(async () => {
   grid-template-columns: 34px 1fr;
   gap: 8px;
   align-items: center;
+  color: #adb3bd;
   font-size: 12px;
   margin-bottom: 10px;
 }
@@ -627,83 +993,150 @@ onMounted(async () => {
 
 .mode-btn {
   flex: 1;
-  border: 1px solid #ffc6e1;
-  background: #fff8fc;
-  border-radius: 6px;
-  padding: 6px 4px;
-  color: #ff5da9;
+  border: 1px solid #474d59;
+  background: #2b2f36;
+  border-radius: 7px;
+  color: #ff8ac7;
   font-size: 12px;
+  padding: 6px 4px;
+}
+
+.mode-btn.lyric-flag {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.mini-search-wrap {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #3f4552;
+  border-radius: 8px;
+  background: #1a1f26;
+}
+
+.mini-lyric {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid #3f4552;
+  border-radius: 8px;
+  background: #1a1f26;
+  min-height: 102px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.mini-lyric-line {
+  margin: 0;
+  text-align: center;
+  color: #8d95a2;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.25s ease;
+}
+
+.mini-lyric-text {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-lyric-line.current {
+  color: #ffd3ea;
+  font-size: 16px;
+  font-weight: 700;
+  transform: scale(1.03);
+}
+
+.mini-lyric-line.current .mini-lyric-text {
+  --line-progress: 0%;
+  background: linear-gradient(
+    90deg,
+    #ffd9ef 0%,
+    #ffd9ef var(--line-progress),
+    #7f8796 var(--line-progress),
+    #7f8796 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .quick-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
+.quick-btn,
+.import-btn,
+.search-btn,
+.submit-btn {
+  border: 1px solid #454b56;
+  border-radius: 8px;
+  background: #2b3038;
+  color: #f5f7fa;
+}
+
 .quick-btn {
-  border: 1px solid #ffd3e8;
-  background: #fff;
-  border-radius: 6px;
   height: 34px;
-  color: #ff5da9;
 }
 
 .import-btn {
   margin-top: 10px;
   width: 100%;
-  border: none;
-  border-radius: 6px;
-  background: #ff76bb;
-  color: #fff;
   height: 36px;
-}
-
-.main-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pink-card {
-  border: 1px solid #ffcae2;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #fff;
+  background: #ff66b3;
+  border-color: transparent;
 }
 
 .pink-head {
-  height: 42px;
-  background: #ffc4df;
-  color: #fff;
-  font-weight: 700;
+  min-height: 42px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  background: #ffb4da;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 14px;
 }
 
 .with-heart {
   justify-content: space-between;
 }
 
+.edit-btn {
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 6px;
+  background: rgba(31, 34, 40, 0.3);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 .pink-body {
   padding: 14px;
-  font-size: 14px;
-  line-height: 1.8;
+  color: #d7dde6;
+  line-height: 1.75;
 }
 
 .intro-row {
   display: grid;
-  grid-template-columns: 1fr 280px;
-  gap: 16px;
+  grid-template-columns: 1fr 260px;
+  gap: 14px;
   align-items: center;
 }
 
 .intro-cover {
   width: 100%;
-  height: 170px;
-  object-fit: cover;
+  height: 164px;
   border-radius: 8px;
+  object-fit: cover;
 }
 
 .search-row {
@@ -712,18 +1145,78 @@ onMounted(async () => {
   gap: 10px;
 }
 
-.search-input {
-  border: 1px solid #ffd5e9;
+.api-row {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr 92px 92px;
+  gap: 10px;
+}
+
+.search-input,
+.form-input,
+.form-textarea {
+  border: 1px solid #4b5260;
   border-radius: 8px;
-  height: 40px;
+  background: #171a1f;
+  color: #f2f4f7;
   padding: 0 12px;
 }
 
+.search-input,
+.form-input {
+  height: 40px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.form-textarea {
+  min-height: 120px;
+  padding-top: 10px;
+  resize: vertical;
+}
+
+.content-editor {
+  min-height: 140px;
+}
+
+.content-editor-input + .content-editor-input {
+  margin-top: 8px;
+}
+
+.submit-btn {
+  height: 36px;
+  width: 120px;
+  justify-self: end;
+  background: #ff66b3;
+  border-color: transparent;
+}
+
 .search-btn {
-  border: none;
-  border-radius: 8px;
-  background: #ff76bb;
-  color: #fff;
+  background: #ff66b3;
+  border-color: transparent;
+}
+
+.search-btn.ghost {
+  background: #2b3038;
+  border-color: #525866;
+  color: #ffacd8;
+}
+
+.search-btn:disabled {
+  opacity: 0.6;
+}
+
+.state-tip {
+  margin-top: 8px;
+  color: #9ca4b0;
+  font-size: 12px;
+}
+
+.state-tip.error {
+  color: #ff7fbf;
 }
 
 .list-wrap {
@@ -738,15 +1231,16 @@ onMounted(async () => {
   grid-template-columns: 54px 1fr auto;
   gap: 10px;
   align-items: center;
-  border: 1px solid #ffe0ef;
+  border: 1px solid #424955;
   border-radius: 8px;
   padding: 8px;
+  background: #191d24;
   cursor: pointer;
 }
 
 .song-item.active {
-  background: #fff1f8;
-  border-color: #ff95c7;
+  border-color: #ff78be;
+  background: #2b2331;
 }
 
 .song-cover {
@@ -758,16 +1252,13 @@ onMounted(async () => {
 
 .song-name {
   font-weight: 700;
+  color: #f8f8f8;
 }
 
-.song-sub {
-  font-size: 12px;
-  color: #7d7d7d;
-}
-
+.song-sub,
 .song-time {
+  color: #9ba3af;
   font-size: 12px;
-  color: #999;
 }
 
 .lyric-wrap {
@@ -775,12 +1266,23 @@ onMounted(async () => {
   max-height: 460px;
   overflow: auto;
   padding: 8px 2px;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.lyric-wrap::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .lyric-line {
   text-align: center;
-  color: #999;
+  color: #a4acb8;
   margin: 14px 0;
+  transition: all 0.25s ease;
+  opacity: 0.7;
+  user-select: none;
 }
 
 .lyric-line span {
@@ -790,28 +1292,206 @@ onMounted(async () => {
 }
 
 .lyric-line.on {
-  color: #ff5da9;
+  color: #ffd3ea;
   font-size: 18px;
   font-weight: 700;
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.empty-tip,
+.log-line {
+  color: #a1a8b5;
 }
 
 .empty-tip {
   text-align: center;
-  color: #999;
-  padding: 26px 0;
+  padding: 24px 0;
 }
 
-@media (max-width: 960px) {
+.log-line + .log-line {
+  margin-top: 6px;
+}
+
+.page-footer {
+  width: min(1220px, 96vw);
+  margin: 14px auto 0;
+  padding: 20px 8px 28px;
+  text-align: center;
+  color: #8d95a2;
+  font-size: 12px;
+}
+
+.footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.footer-links a {
+  color: #ff8dcb;
+  text-decoration: none;
+}
+
+.search-popup-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 12, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 30;
+  padding: 16px;
+}
+
+.search-popup {
+  width: min(760px, 94vw);
+  max-height: 82vh;
+  border: 1px solid #434b58;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #1b2028 0%, #141820 100%);
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.search-popup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  background: linear-gradient(90deg, #ff9ed1 0%, #ffb8df 100%);
+  color: #ffffff;
+}
+
+.search-popup-title h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.search-popup-title p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.popup-close-btn {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.18);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.search-popup-list {
+  max-height: calc(82vh - 54px);
+  overflow: auto;
+  padding: 12px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.search-popup-item {
+  display: grid;
+  grid-template-columns: 54px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #3f4652;
+  border-radius: 8px;
+  padding: 10px;
+  background: #181d24;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.search-popup-item:hover {
+  border-color: #ff78be;
+  background: #2b2331;
+  transform: translateY(-1px);
+}
+
+.popup-item-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.playing-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 103, 179, 0.2);
+  border: 1px solid rgba(255, 120, 190, 0.55);
+  color: #ff9fd2;
+  font-size: 11px;
+}
+
+.popup-empty {
+  border: 1px dashed #475062;
+  border-radius: 10px;
+  padding: 28px 14px;
+  text-align: center;
+}
+
+.popup-empty-title {
+  margin: 0;
+  color: #d7deea;
+  font-weight: 700;
+}
+
+.popup-empty-sub {
+  margin: 6px 0 0;
+  color: #9ca5b4;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
   .content-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: 280px 1fr;
   }
 
   .intro-row {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 860px) {
+  .content-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .main-panel {
+    order: 1;
+  }
+
+  .left-panel {
+    order: 2;
+  }
+
+  .api-row {
+    grid-template-columns: 1fr;
+  }
+
+  .search-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
   .title {
-    font-size: 36px;
+    letter-spacing: 0;
+  }
+
+  .pink-body {
+    padding: 12px;
   }
 }
 </style>
