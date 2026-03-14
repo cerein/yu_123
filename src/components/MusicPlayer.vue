@@ -219,7 +219,6 @@ import {
   getSongDuration,
   invalidateSongSourceCache,
   pingMusicApi,
-  probeApiPlayable,
   reportPlaybackResult,
   resolvePlayableUrls,
   searchMusic,
@@ -444,29 +443,26 @@ const chooseSearchSong = async (song: SongResult) => {
 const loadAvailableApiBases = async () => {
   const current = getApiBase()
   const seed = Array.from(new Set([current, ...API_PRESET_BASES].map((item) => item.trim()).filter(Boolean)))
-  const playableList: string[] = []
+  const health = new Map<string, boolean>()
   const okList: string[] = []
   for (const base of seed) {
     try {
-      const playable = await probeApiPlayable(base)
-      if (playable) {
-        playableList.push(base)
-        okList.push(base)
-        continue
-      }
-    } catch {}
-    try {
       const ok = await pingMusicApi(base)
+      health.set(base, ok)
       if (ok) {
         okList.push(base)
       }
-    } catch {}
+    } catch {
+      health.set(base, false)
+    }
   }
-  availableApiBases.value = playableList.length > 0 ? playableList : okList.length > 0 ? okList : seed
-  selectedApiBase.value = availableApiBases.value.includes(current) ? current : availableApiBases.value[0] || current
+  availableApiBases.value = seed
+  const currentOk = health.get(current) === true
+  const fallback = okList[0] || seed[0] || current
+  selectedApiBase.value = currentOk ? current : fallback
   if (selectedApiBase.value) {
     setApiBase(selectedApiBase.value)
-    apiTestMsg.value = `当前 API：${selectedApiBase.value}`
+    apiTestMsg.value = currentOk ? `当前 API：${selectedApiBase.value}` : `已回退到可用 API：${selectedApiBase.value}`
   }
 }
 
@@ -1007,8 +1003,19 @@ onMounted(async () => {
 watch(selectedApiBase, async (value) => {
   const base = value.trim()
   if (!base) return
+  const ok = await pingMusicApi(base).catch(() => false)
+  if (!ok) {
+    searchError.value = '该音源不可用，已自动保持当前可用音源'
+    const fallback = getApiBase()
+    if (fallback && fallback !== base) {
+      selectedApiBase.value = fallback
+    }
+    apiTestMsg.value = fallback ? `当前 API：${fallback}` : ''
+    return
+  }
   setApiBase(base)
   apiTestMsg.value = `当前 API：${base}`
+  searchError.value = ''
   if (searchQuery.value.trim()) {
     await getSearchResult(searchQuery.value)
   }

@@ -35,10 +35,20 @@ const cwd = process.cwd()
 const fileEnv = loadEnvFiles(cwd)
 const mergedEnv = { ...process.env, ...fileEnv }
 const port = Number(mergedEnv.VITE_UNBLOCK_PORT || mergedEnv.UNM_PORT || 3100)
-const sourcesRaw = mergedEnv.VITE_UNBLOCK_SOURCES || mergedEnv.UNM_SOURCES || 'kuwo kugou pyncmd bilibili'
+const sourcesRaw =
+  mergedEnv.VITE_UNBLOCK_SOURCES ||
+  mergedEnv.UNM_SOURCES ||
+  'https://www.123865.com/s/ZhzPvd-WFdO'
+const isHttpUrl = (value) => /^https?:\/\//i.test(value.trim())
+const normalizeSourceToken = (value) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (isHttpUrl(trimmed)) return trimmed
+  return trimmed.toLowerCase()
+}
 const sourceTokens = sourcesRaw
   .split(/[\s,]+/)
-  .map((item) => item.trim().toLowerCase())
+  .map(normalizeSourceToken)
   .filter(Boolean)
 const allowedSources = new Set([
   'qq',
@@ -55,7 +65,7 @@ const allowedSources = new Set([
   'pyncmd'
 ])
 const dedupedSources = Array.from(new Set(sourceTokens))
-const sources = dedupedSources.filter((item) => allowedSources.has(item))
+const sources = dedupedSources.filter((item) => allowedSources.has(item) || isHttpUrl(item))
 if (sources.length === 0) {
   sources.push('kugou', 'kuwo', 'bilibili')
 }

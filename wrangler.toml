@@ -1,6 +1,0 @@
-name = "yu123-stream-proxy"
-main = "ops/stream-proxy-worker.js"
-compatibility_date = "2026-03-14"
-
-[observability]
-enabled = true

@@ -66,62 +66,29 @@ const lyricMap: Record<string, ILyric> = {
 }
 
 const API_BASE_KEY = 'music_api_base'
-const METING_BASE = 'https://api.injahow.cn/meting/api.php'
-const REMOTE_UNM_BASE = ((import.meta as { env?: { VITE_REMOTE_UNM_BASE?: string } }).env?.VITE_REMOTE_UNM_BASE || '').trim()
-const STREAM_PROXY_BASE = ((import.meta as { env?: { VITE_STREAM_PROXY_BASE?: string } }).env?.VITE_STREAM_PROXY_BASE || '').trim()
+const METING_BASE = 'https://api.injahow.cn/meting/'
 const PUBLIC_API_BASES: string[] = [
-  'https://music-api.lixingyong.com',
-  'https://api.injahow.cn/meting',
   'https://ncm.zhenxin.me',
   'https://zm.wwoyun.cn',
   'https://zm.i9mr.com',
-  'https://netease-cloud-music-api-beta-lyart.vercel.app',
-  'https://api.mtnhao.com',
-  'https://music.163.com/api',
-  'https://api.paugram.com/netease',
-  'https://v1.hitokoto.cn/nm',
-  'https://api.itooi.cn/music/netease'
+  'https://netease-cloud-music-api-beta-lyart.vercel.app'
 ]
-export const API_PRESET_BASES: string[] = Array.from(
-  new Set(['/unm-api', REMOTE_UNM_BASE, ...PUBLIC_API_BASES].map((item) => item.trim()).filter(Boolean))
-)
+const EXTRA_API_BASES: string[] = [
+  'https://shorturl.at/syAT2',
+  'https://liuyang-public.oss-cn-beijing.aliyuncs.com/flower-v1.0.0.js',
+  'https://mirror.ghproxy.com/https://raw.githubusercontent.com/OneCodeMonkey/music-sources/master/js/flower-v1.0.0.js'
+]
+export const API_PRESET_BASES: string[] = ['/unm-api', ...PUBLIC_API_BASES, ...EXTRA_API_BASES]
 const canUseLocalUnm = () => {
   if (typeof window === 'undefined') return false
   return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 }
 
-const parseUnmBaseFromAnyUrl = (raw: string) => {
-  const value = raw.trim()
-  if (!value) return ''
-  if (value.startsWith('/unm-api')) return '/unm-api'
-  const match = value.match(/^https?:\/\/[^/]+\/unm-api(?:\/api\/.*)?$/i)
-  if (!match) return ''
-  try {
-    const parsed = new URL(value)
-    return `${parsed.origin}/unm-api`
-  } catch {
-    return ''
-  }
-}
-
 const normalizeApiBase = (base: string) => {
   const trimmed = base.trim()
   if (!trimmed) return ''
-  const unmBase = parseUnmBaseFromAnyUrl(trimmed)
-  if (unmBase) return unmBase
+  if (trimmed.includes('/unm-api')) return '/unm-api'
   return trimmed.replace(/\/+$/, '')
-}
-
-const isLoopbackBase = (base: string) => {
-  const normalized = normalizeApiBase(base)
-  if (!normalized) return false
-  if (normalized.startsWith('/unm-api')) return true
-  try {
-    const parsed = new URL(normalized)
-    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
-  } catch {
-    return false
-  }
 }
 
 const defaultApiBase = () => PUBLIC_API_BASES[0] || METING_BASE
@@ -129,8 +96,7 @@ const defaultApiBase = () => PUBLIC_API_BASES[0] || METING_BASE
 const shouldUseLocalUnm = () => canUseLocalUnm()
 
 const API_CANDIDATES = () => {
-  const savedRaw = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
-  const saved = !canUseLocalUnm() && isLoopbackBase(savedRaw) ? '' : savedRaw
+  const saved = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
   const local = canUseLocalUnm() ? ['/unm-api'] : []
   return Array.from(new Set([...local, saved, ...PUBLIC_API_BASES].filter(Boolean)))
 }
@@ -157,8 +123,7 @@ const buildUrl = (base: string, path: string, query: Record<string, string | num
 }
 
 export const getApiBase = () => {
-  const savedRaw = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
-  const saved = !canUseLocalUnm() && isLoopbackBase(savedRaw) ? '' : savedRaw
+  const saved = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
   if (saved) return saved
   if (canUseLocalUnm()) return '/unm-api'
   return defaultApiBase()
@@ -237,31 +202,7 @@ const withTimeout = <T>(promise: Promise<T>, timeoutMs: number) =>
     )
   })
 
-const isUnmBase = (base: string) => normalizeApiBase(base).endsWith('/unm-api')
-
-const getPreferredUnmBase = () => {
-  const savedRaw = normalizeApiBase(localStorage.getItem(API_BASE_KEY)?.trim() || '')
-  const saved = !canUseLocalUnm() && isLoopbackBase(savedRaw) ? '' : savedRaw
-  if (isUnmBase(saved)) return saved
-  if (canUseLocalUnm()) return '/unm-api'
-  return ''
-}
-
-const canUseInCurrentPage = (url: string) => {
-  if (typeof window === 'undefined') return true
-  if (window.location.protocol !== 'https:') return true
-  if (!url.startsWith('http://')) return true
-  return Boolean(STREAM_PROXY_BASE)
-}
-
-const applyStreamProxyIfNeeded = (url: string) => {
-  if (!url.startsWith('http://')) return url
-  if (typeof window === 'undefined') return url
-  if (window.location.protocol !== 'https:') return url
-  if (!STREAM_PROXY_BASE) return ''
-  const base = STREAM_PROXY_BASE.replace(/\/+$/, '')
-  return `${base}/stream?url=${encodeURIComponent(url)}`
-}
+const isUnmBase = (base: string) => normalizeApiBase(base) === '/unm-api'
 
 type RawSong = {
   id: number | string
@@ -290,31 +231,7 @@ const normalizeCoverUrl = (url?: string) => {
   return trimmed
 }
 
-const decodeBase64Text = (raw: string) => {
-  const normalized = raw.replace(/-/g, '+').replace(/_/g, '/')
-  const padLength = normalized.length % 4 === 0 ? 0 : 4 - (normalized.length % 4)
-  const padded = `${normalized}${'='.repeat(padLength)}`
-  if (typeof atob === 'function') return atob(padded)
-  const NodeBuffer = (globalThis as { Buffer?: { from: (value: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer
-  if (NodeBuffer) return NodeBuffer.from(padded, 'base64').toString('utf8')
-  return ''
-}
-
-const decodeMusicPackageUrl = (url: URL) => {
-  const parts = url.pathname.split('/').filter(Boolean)
-  if (parts.length < 2 || parts[0] !== 'package') return ''
-  const token = parts[1]
-  if (!token) return ''
-  try {
-    const decoded = decodeBase64Text(token).trim()
-    if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
-      return decoded
-    }
-  } catch {}
-  return ''
-}
-
-const normalizeMediaUrl = (url?: string | null): string => {
+const normalizeMediaUrl = (url?: string | null) => {
   if (!url) return ''
   const trimmed = url.trim()
   if (!trimmed) return ''
@@ -330,12 +247,8 @@ const normalizeMediaUrl = (url?: string | null): string => {
   if (trimmed.startsWith('https://')) {
     try {
       const parsed = new URL(trimmed)
-      if (parsed.hostname === 'music.163.com' && parsed.pathname.startsWith('/package/')) {
-        const decoded = decodeMusicPackageUrl(parsed)
-        const decodedNormalized = normalizeMediaUrl(decoded)
-        if (decodedNormalized) return decodedNormalized
-        const unmBase = getPreferredUnmBase()
-        if (unmBase) return `${unmBase}${parsed.pathname}${parsed.search}`
+      if (parsed.hostname === 'music.163.com' && parsed.pathname.startsWith('/package/') && canUseLocalUnm()) {
+        return `/unm-api${parsed.pathname}${parsed.search}`
       }
       if (parsed.hostname.endsWith('.music.126.net')) {
         const tail = `${parsed.pathname.replace(/^\/+/, '')}${parsed.search}`
@@ -682,6 +595,51 @@ const resolveUrlFromMetingFallback = async (song: SongResult) => {
       if (matched) return matched
     } catch {}
   }
+  return ''
+}
+
+const scoreSongMatch = (candidate: SongResult, target: SongResult) => {
+  const targetName = (target.name || '').toLowerCase()
+  const targetArtist = (target.ar?.[0]?.name || '').toLowerCase()
+  const targetDuration = target.dt || 0
+  const name = (candidate.name || '').toLowerCase()
+  const artist = (candidate.ar?.[0]?.name || '').toLowerCase()
+  const duration = candidate.dt || 0
+  const nameHit = targetName && name ? (name.includes(targetName) || targetName.includes(name) ? 1 : 0) : 0
+  const artistHit = targetArtist && artist ? (artist.includes(targetArtist) || targetArtist.includes(artist) ? 1 : 0) : 0
+  const durationGap = targetDuration > 0 && duration > 0 ? Math.abs(targetDuration - duration) : 999999
+  return nameHit * 4 + artistHit * 3 - Math.min(durationGap / 1000, 120) / 120
+}
+
+const resolveUrlFromKeywordFallback = async (song: SongResult) => {
+  if (!canUseLocalUnm()) return ''
+  const keyword = `${song.name || ''} ${song.ar?.[0]?.name || ''}`.trim()
+  if (!keyword) return ''
+  try {
+    const searchRaw = await requestJson<{ result?: { songs?: RawSong[] } }>(
+      buildUrl('/unm-api', '/api/search/get/web', {
+        s: keyword,
+        type: 1,
+        limit: 25,
+        offset: 0,
+        total: 1
+      })
+    )
+    const songs = Array.isArray(searchRaw?.result?.songs) ? mapSongs(searchRaw.result.songs) : []
+    if (songs.length === 0) return ''
+    const ranked = songs
+      .filter((item) => String(item.id) !== String(song.id))
+      .map((item) => ({ item, score: scoreSongMatch(item, song) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+    for (const matched of ranked) {
+      try {
+        const url = await withTimeout(getMusicUrl(matched.item.id, matched.item.dt || song.dt || 0), 3200)
+        const normalized = normalizeMediaUrl(url)
+        if (normalized) return normalized
+      } catch {}
+    }
+  } catch {}
   return ''
 }
 
@@ -1046,11 +1004,8 @@ export const resolvePlayableUrls = async (song: SongResult, forceRefresh = false
     if (candidates.length >= MAX_PLAYABLE_CANDIDATES) return
     const normalized = normalizeMediaUrl(url)
     if (!normalized) return
-    if (!canUseInCurrentPage(normalized)) return
-    const candidate = applyStreamProxyIfNeeded(normalized)
-    if (!candidate) return
-    if (!candidates.includes(candidate)) {
-      candidates.push(candidate)
+    if (!candidates.includes(normalized)) {
+      candidates.push(normalized)
     }
   }
 
@@ -1060,13 +1015,20 @@ export const resolvePlayableUrls = async (song: SongResult, forceRefresh = false
   } catch {}
   pushCandidate(song.playMusicUrl)
   try {
-    const freshUrl = await withTimeout(getMusicUrl(song.id, song.dt || 0), 2200)
+    const freshUrl = await withTimeout(getMusicUrl(song.id, song.dt || 0), 4200)
     pushCandidate(freshUrl)
   } catch {}
 
   if (candidates.length < 2) {
     try {
-      const metingUrl = await withTimeout(resolveUrlFromMetingFallback(song), 1800)
+      const keywordUrl = await withTimeout(resolveUrlFromKeywordFallback(song), 4200)
+      pushCandidate(keywordUrl)
+    } catch {}
+  }
+
+  if (candidates.length < 2) {
+    try {
+      const metingUrl = await withTimeout(resolveUrlFromMetingFallback(song), 2500)
       pushCandidate(metingUrl)
     } catch {}
   }
@@ -1096,31 +1058,6 @@ export const pingMusicApi = async (base: string) => {
       : buildUrl(base, '/cloudsearch', { keywords: '周杰伦', type: 1, limit: 1, offset: 0 })
     const result = await requestJson<{ code?: number; result?: { songs?: RawSong[] } }>(url)
     return Boolean(result?.result?.songs)
-  } catch {
-    return false
-  }
-}
-
-export const probeApiPlayable = async (base: string) => {
-  const normalizedBase = normalizeApiBase(base)
-  if (!normalizedBase) return false
-  try {
-    const searchUrl = isUnmBase(normalizedBase)
-      ? buildUrl(normalizedBase, '/api/search/get/web', { s: '周杰伦', type: 1, limit: 1, offset: 0, total: 1 })
-      : buildUrl(normalizedBase, '/cloudsearch', { keywords: '周杰伦', type: 1, limit: 1, offset: 0 })
-    const search = await requestJson<{ result?: { songs?: RawSong[] } }>(searchUrl)
-    const song = search?.result?.songs?.[0]
-    if (!song?.id) return false
-    const raw = isUnmBase(normalizedBase)
-      ? await requestJson<{ data?: UrlPayloadItem[] }>(
-          buildUrl(normalizedBase, '/api/song/enhance/player/url', { ids: `[${String(song.id)}]`, br: 320000 })
-        )
-      : await requestJson<{ data?: UrlPayloadItem[] }>(
-          buildUrl(normalizedBase, '/song/url', { id: String(song.id), br: 320000 })
-        )
-    const candidate = pickBestUrlCandidate(raw?.data, song.dt || 0)
-    const normalized = normalizeMediaUrl(candidate?.url)
-    return Boolean(normalized && canUseInCurrentPage(normalized))
   } catch {
     return false
   }
