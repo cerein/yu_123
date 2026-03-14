@@ -75,7 +75,12 @@ const PUBLIC_API_BASES: string[] = [
   'https://ncm.zhenxin.me',
   'https://zm.wwoyun.cn',
   'https://zm.i9mr.com',
-  'https://netease-cloud-music-api-beta-lyart.vercel.app'
+  'https://netease-cloud-music-api-beta-lyart.vercel.app',
+  'https://api.mtnhao.com',
+  'https://music.163.com/api',
+  'https://api.paugram.com/netease',
+  'https://v1.hitokoto.cn/nm',
+  'https://api.itooi.cn/music/netease'
 ]
 export const API_PRESET_BASES: string[] = Array.from(
   new Set(['/unm-api', REMOTE_UNM_BASE, ...PUBLIC_API_BASES].map((item) => item.trim()).filter(Boolean))
