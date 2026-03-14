@@ -66,10 +66,12 @@ const lyricMap: Record<string, ILyric> = {
 }
 
 const API_BASE_KEY = 'music_api_base'
-const METING_BASE = 'https://api.injahow.cn/meting/'
+const METING_BASE = 'https://api.injahow.cn/meting/api.php'
 const REMOTE_UNM_BASE = ((import.meta as { env?: { VITE_REMOTE_UNM_BASE?: string } }).env?.VITE_REMOTE_UNM_BASE || '').trim()
 const STREAM_PROXY_BASE = ((import.meta as { env?: { VITE_STREAM_PROXY_BASE?: string } }).env?.VITE_STREAM_PROXY_BASE || '').trim()
 const PUBLIC_API_BASES: string[] = [
+  'https://music-api.lixingyong.com',
+  'https://api.injahow.cn/meting',
   'https://ncm.zhenxin.me',
   'https://zm.wwoyun.cn',
   'https://zm.i9mr.com',

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: yu123-unm
+    runtime: docker
+    dockerfilePath: ./ops/Dockerfile.unm
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: VITE_UNBLOCK_PORT
+        value: 3100
+      - key: UNM_PORT
+        value: 3100
+      - key: VITE_UNBLOCK_SOURCES
+        value: kuwo kugou pyncmd bilibili
+      - key: ENABLE_FLAC
+        value: "true"
+      - key: ENABLE_LOCAL_VIP
+        value: cvip
